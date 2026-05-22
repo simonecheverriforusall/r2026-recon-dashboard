@@ -16,6 +16,12 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v gh >/dev/null || die "Install GitHub CLI: brew install gh"
 command -v render >/dev/null || die "Install Render CLI: brew install render"
 
+if ! render workspace set "${RENDER_WORKSPACE:-simon-forusall}" -o text --confirm >/dev/null 2>&1; then
+  echo "Setting Render workspace…"
+  render workspaces -o json --confirm | python3 -c "import json,sys; ws=json.load(sys.stdin); print('Available:', [w['name'] for w in ws])"
+  die "Run: render workspace set <name>"
+fi
+
 if ! gh auth status >/dev/null 2>&1; then
   echo "GitHub CLI not authenticated. Opening browser login…"
   gh auth login -h github.com -p https -w
@@ -25,6 +31,15 @@ if [[ -z "${RENDER_API_KEY:-}" ]] && ! render whoami -o json --confirm >/dev/nul
   echo "Render CLI not authenticated. Opening browser login…"
   render login
 fi
+
+echo ""
+echo "Before creating the service, ensure:"
+echo "  1. Render GitHub app can access this repo:"
+echo "     https://github.com/apps/render/installations/new"
+echo "  2. A payment method is on file (required even for free tier):"
+echo "     https://dashboard.render.com/billing"
+echo ""
+read -r -p "Press Enter when both are done, or Ctrl+C to abort…"
 
 [[ -f .env ]] || die "Missing .env — copy .env.example and fill in Jira credentials."
 

@@ -10,7 +10,14 @@ Host the dashboard for the whole company. Jira credentials stay on the server; u
 
 Render deploys from a Git repo. Push `recon-dashboard/` (or the whole monorepo) to GitHub.
 
-### 2. Create a Render web service
+### 2. Connect GitHub + billing (required once)
+
+Render needs both before it can create a service:
+
+1. **GitHub app** — [Install Render on GitHub](https://github.com/apps/render/installations/new) and grant access to `r2026-recon-dashboard`.
+2. **Billing** — [Add a card](https://dashboard.render.com/billing) (required even for the free plan; you won't be charged unless you upgrade).
+
+### 3. Create a Render web service
 
 1. Go to [render.com](https://render.com) and sign up / log in.
 2. **New → Blueprint** (if using `render.yaml`) **or** **New → Web Service**.
@@ -21,7 +28,7 @@ Render deploys from a Git repo. Push `recon-dashboard/` (or the whole monorepo) 
    - **Plan:** Free
    - **Health check path:** `/api/health`
 
-### 3. Set environment variables
+### 4. Set environment variables
 
 In Render → your service → **Environment**, add:
 
@@ -34,7 +41,7 @@ In Render → your service → **Environment**, add:
 
 Do **not** commit `.env` to Git.
 
-### 4. Deploy
+### 5. Deploy
 
 Click **Deploy**. When it’s live, Render gives you a URL like:
 
