@@ -15,6 +15,7 @@ Then open http://localhost:8000
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,10 +23,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 # ── env ───────────────────────────────────────────────────────────────────────
 load_dotenv(Path(__file__).parent / ".env")
@@ -34,6 +38,15 @@ JIRA_BASE  = os.environ.get("JIRA_BASE_URL", "https://forusall401k.atlassian.net
 JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
 JIRA_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
 PROJECT    = os.environ.get("JIRA_PROJECT_KEY", "R2026")
+
+REQUIRE_AUTH         = os.environ.get("REQUIRE_AUTH", "true").lower() in ("1", "true", "yes")
+SESSION_SECRET       = os.environ.get("SESSION_SECRET", "")
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "forusall.com").lstrip("@")
+APP_BASE_URL         = os.environ.get("APP_BASE_URL", "").rstrip("/")
+
+AUTH_PUBLIC_PATHS = {"/api/health", "/auth/login", "/auth/callback"}
 
 # ── Jira custom fields (R2026) ────────────────────────────────────────────────
 OPS_CF     = "customfield_11675"
@@ -394,9 +407,44 @@ def _ops_label(ops_email: str) -> str:
     return " ".join(w.capitalize() for w in name.split())
 
 
+# ── Google OAuth (@forusall.com) ──────────────────────────────────────────────
+
+oauth = OAuth()
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+
+def _auth_configured() -> bool:
+    return bool(SESSION_SECRET and GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+
+def _email_allowed(email: str) -> bool:
+    email = (email or "").strip().lower()
+    return email.endswith(f"@{ALLOWED_EMAIL_DOMAIN.lower()}")
+
+
+def _app_base_url(request: Request) -> str:
+    if APP_BASE_URL:
+        return APP_BASE_URL
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(title="R2026 Reconciliation Dashboard API")
+
+if not SESSION_SECRET and REQUIRE_AUTH:
+    SESSION_SECRET = secrets.token_urlsafe(32)
+
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET or secrets.token_urlsafe(32))
 
 app.add_middleware(
     CORSMiddleware,
@@ -404,6 +452,74 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_google_auth(request: Request, call_next):
+    if not REQUIRE_AUTH:
+        return await call_next(request)
+
+    path = request.url.path
+    if path in AUTH_PUBLIC_PATHS:
+        return await call_next(request)
+
+    if not _auth_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Auth not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET."},
+        )
+
+    user = request.session.get("user")
+    if user and _email_allowed(user.get("email", "")):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    return RedirectResponse("/auth/login")
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request):
+    if not _auth_configured():
+        return HTMLResponse(
+            "<h1>Auth not configured</h1><p>Set Google OAuth env vars on the server.</p>",
+            status_code=503,
+        )
+    redirect_uri = f"{_app_base_url(request)}/auth/callback"
+    return await oauth.google.authorize_redirect(
+        request,
+        redirect_uri,
+        hd=ALLOWED_EMAIL_DOMAIN,
+    )
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    if not _auth_configured():
+        return RedirectResponse("/auth/login")
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception:
+        return RedirectResponse("/auth/login")
+    userinfo = token.get("userinfo") or {}
+    email = userinfo.get("email", "")
+    if not _email_allowed(email):
+        request.session.clear()
+        return HTMLResponse(
+            f"<h1>Access denied</h1><p>Only @{ALLOWED_EMAIL_DOMAIN} accounts are allowed.</p>",
+            status_code=403,
+        )
+    request.session["user"] = {
+        "email": email,
+        "name":  userinfo.get("name", ""),
+    }
+    return RedirectResponse("/")
+
+
+@app.get("/auth/logout")
+async def auth_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/auth/login")
 
 
 @app.get("/api/dashboard")

@@ -17,24 +17,50 @@ User → r2026.forusall.com (Cloudflare DNS, proxied)
 
 ---
 
-## Step 1 — DNS in Cloudflare (~2 min)
+## Step 1 — DNS record (required — this is why you see NXDOMAIN)
 
-You need admin access to the **forusall.com** zone in Cloudflare.
+`DNS_PROBE_FINISHED_NXDOMAIN` means **no DNS record exists yet** for `r2026.forusall.com`.
 
-1. Open [Cloudflare DNS for forusall.com](https://dash.cloudflare.com/) → select **forusall.com** → **DNS** → **Records**.
-2. **Add record:**
+`forusall.com` is hosted on **AWS Route 53** (not Cloudflare). You need someone with Route 53 access to add the record.
 
-   | Field | Value |
-   |-------|-------|
-   | Type | `CNAME` |
-   | Name | `r2026` |
-   | Target | `r2026-recon-dashboard.onrender.com` |
-   | Proxy status | **Proxied** (orange cloud ON) |
-   | TTL | Auto |
+### Option A — Route 53 only (dashboard works, no Google login gate)
 
-3. Save.
+In **AWS Route 53** → hosted zone **forusall.com** → **Create record**:
 
-> **Important:** The orange cloud must be ON. Access only works when traffic goes through Cloudflare.
+| Field | Value |
+|-------|-------|
+| Record name | `r2026` |
+| Type | `CNAME` |
+| Value | `r2026-recon-dashboard.onrender.com` |
+| TTL | 300 |
+
+Save. Wait 5–15 minutes, then open https://r2026.forusall.com
+
+> `recon.forusall.com` already exists in Route 53 (points elsewhere). Do **not** reuse that name.
+
+### Option B — Cloudflare Access (Google login) + Route 53
+
+Cloudflare Access only works if traffic passes through Cloudflare. That usually means either:
+
+- **forusall.com** is on Cloudflare (proxied), **or**
+- IT sets up a **Cloudflare for SaaS** / custom hostname for `r2026.forusall.com`
+
+If your zone is only on Route 53, ask IT which approach they use. The Cloudflare steps below assume you can proxy `r2026.forusall.com` through Cloudflare.
+
+**Cloudflare DNS** (if the zone is on Cloudflare):
+
+| Field | Value |
+|-------|-------|
+| Type | `CNAME` |
+| Name | `r2026` |
+| Target | `r2026-recon-dashboard.onrender.com` |
+| Proxy | **Proxied** (orange cloud ON) |
+
+### Use the app now (no custom domain)
+
+While DNS is pending, the dashboard already works at:
+
+**https://r2026-recon-dashboard.onrender.com**
 
 ---
 
@@ -130,7 +156,7 @@ Direct Render URL (`r2026-recon-dashboard.onrender.com`) will still work **witho
 
 | Problem | Fix |
 |---------|-----|
-| DNS not verifying on Render | Wait 5–15 min; confirm CNAME target and orange cloud |
+| NXDOMAIN / site can't be reached | No DNS record yet — add CNAME `r2026` in **Route 53** (see Step 1) |
 | Redirect URI mismatch | Google OAuth redirect must exactly match `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback` |
 | Gmail accounts can log in | Use **Google Workspace** IdP + **Internal** OAuth consent, not generic Google |
 | 525 / SSL errors | Wait for Render to issue cert after DNS verifies |

@@ -15,3 +15,13 @@ services:
         sync: false
       - key: JIRA_PROJECT_KEY
         value: R2026
+      - key: REQUIRE_AUTH
+        value: "true"
+      - key: ALLOWED_EMAIL_DOMAIN
+        value: forusall.com
+      - key: SESSION_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
