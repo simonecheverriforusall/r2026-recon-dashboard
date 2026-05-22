@@ -15,6 +15,7 @@ Render deploys from a Git repo. Push `recon-dashboard/` (or the whole monorepo) 
 Render needs both before it can create a service:
 
 1. **GitHub app** — [Install Render on GitHub](https://github.com/apps/render/installations/new) and grant access to `r2026-recon-dashboard`.
+   - For a **private** personal repo, Render must be installed on your GitHub user (`simonecheverriforusall`) with that repo selected. If deploys fail with "unfetchable", the repo is currently **public** (no secrets in source — Jira creds are only in Render env vars).
 2. **Billing** — [Add a card](https://dashboard.render.com/billing) (required even for the free plan; you won't be charged unless you upgrade).
 
 ### 3. Create a Render web service
