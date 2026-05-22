@@ -54,36 +54,15 @@ Open it — you should see the dashboard (first load may take ~30s on the free t
 
 ## Part 2 — Cloudflare Access (Google login, @forusall.com only)
 
-Put Cloudflare in front of Render so only ForUsAll Google accounts can open the site.
+**→ Full click-by-click guide: [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)**
 
-### 1. Add your domain to Cloudflare
+Custom domain **`recon.forusall.com`** is already registered on Render. You only need:
 
-If `forusall.com` (or a subdomain) isn’t on Cloudflare yet, add the zone in the Cloudflare dashboard.
+1. **Cloudflare DNS** — CNAME `recon` → `r2026-recon-dashboard.onrender.com` (proxied)
+2. **Google Workspace IdP** in Zero Trust (Internal OAuth, domain `forusall.com`)
+3. **Access app** on `recon.forusall.com` with allow policy for `@forusall.com`
 
-### 2. Point a subdomain at Render
-
-Create a DNS record:
-
-| Type | Name | Target |
-|------|------|--------|
-| CNAME | `recon` (→ `recon.forusall.com`) | `r2026-recon-dashboard.onrender.com` |
-
-Enable the **orange cloud** (proxied) so traffic goes through Cloudflare.
-
-In Render → **Settings → Custom Domains**, add `recon.forusall.com` and follow Render’s verification steps.
-
-### 3. Enable Zero Trust (free for up to 50 users)
-
-1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Access → Applications**.
-2. **Add an application** → **Self-hosted**.
-3. **Application domain:** `recon.forusall.com` (or your chosen subdomain).
-4. **Identity providers:** add **Google**. Use your company Google Workspace / OAuth client if IT provides one, or Cloudflare’s Google integration.
-5. **Add a policy:**
-   - **Action:** Allow
-   - **Include:** Emails ending in `@forusall.com`  
-     *(or: Login Methods → Google, plus an email domain rule)*
-
-Save. Anyone visiting `https://recon.forusall.com` must sign in with Google; only `@forusall.com` addresses pass through to Render.
+Share **https://recon.forusall.com** with the team (not the `.onrender.com` URL).
 
 ---
 
