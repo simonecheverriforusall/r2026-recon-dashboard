@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>R2026 Reconciliation Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+          colors: {
+            brand: { 50:'#eff6ff', 100:'#dbeafe', 500:'#3b82f6', 600:'#2563eb', 700:'#1d4ed8', 900:'#1e3a5f' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+
+    body { background: #f1f5f9; }
+
+    /* ── card ── */
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+      padding: 24px;
+    }
+
+    /* ── kpi card ── */
+    .kpi-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .kpi-value { font-size: 2rem; font-weight: 700; line-height: 1; letter-spacing: -0.5px; }
+    .kpi-label { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin-top: 2px; }
+    .kpi-sub   { font-size: .8rem; color: #64748b; margin-top: 6px; }
+
+    /* ── progress bar ── */
+    .progress-track {
+      height: 5px; background: #e2e8f0; border-radius: 99px; margin-top: 12px; overflow: hidden;
+    }
+    .progress-fill { height: 100%; border-radius: 99px; transition: width .6s ease; }
+
+    /* ── section header ── */
+    .section-title { font-size: 1rem; font-weight: 600; color: #0f172a; margin-bottom: 4px; }
+    .section-sub   { font-size: .78rem; color: #94a3b8; }
+
+    /* ── table ── */
+    .dash-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .dash-table th {
+      text-align: left; font-size: .7rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em; color: #94a3b8;
+      padding: 8px 12px; border-bottom: 1px solid #e2e8f0;
+    }
+    .dash-table td {
+      padding: 10px 12px; font-size: .85rem; color: #334155;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .dash-table tr:last-child td { border-bottom: none; }
+    .dash-table tr:hover td { background: #f8fafc; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: .7rem; font-weight: 600; padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .badge-green { background: #dcfce7; color: #15803d; }
+    .badge-blue  { background: #dbeafe; color: #1d4ed8; }
+
+    /* ── spinner / skeleton ── */
+    .skeleton {
+      background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 8px;
+    }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+    #loader-overlay {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(248,250,252,.88);
+      backdrop-filter: blur(4px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin .75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── drilldown drawer ── */
+    #drawer-overlay {
+      position: fixed; inset: 0; z-index: 60;
+      background: rgba(15,23,42,.35);
+      backdrop-filter: blur(2px);
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s ease;
+    }
+    #drawer-overlay.open { opacity: 1; pointer-events: all; }
+
+    #drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 61;
+      width: min(520px, 95vw);
+      background: #fff;
+      box-shadow: -8px 0 40px rgba(0,0,0,.12);
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform .25s cubic-bezier(.4,0,.2,1);
+      border-left: 1px solid #e2e8f0;
+    }
+    #drawer.open { transform: translateX(0); }
+
+    #drawer-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    #drawer-close {
+      width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #94a3b8; cursor: pointer; border: 1px solid #e2e8f0;
+      transition: all .15s;
+    }
+    #drawer-close:hover { background: #f8fafc; color: #334155; }
+
+    #drawer-body { flex: 1; overflow-y: auto; padding: 8px 0 24px; }
+
+    .plan-row {
+      padding: 12px 24px;
+      border-bottom: 1px solid #f8fafc;
+      transition: background .1s;
+    }
+    .plan-row:hover { background: #f8fafc; }
+    .plan-row:last-child { border-bottom: none; }
+
+    .plan-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+
+    .comment-bubble {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 10px 12px; margin-top: 8px; font-size: .8rem; color: #334155;
+      line-height: 1.5;
+    }
+    .comment-meta { font-size: .7rem; color: #94a3b8; margin-bottom: 4px; font-weight: 500; }
+    .comment-text { white-space: pre-wrap; word-break: break-word; }
+
+    .comments-spinner {
+      display: flex; align-items: center; gap: 8px;
+      font-size: .8rem; color: #94a3b8; padding: 4px 0;
+    }
+    .comments-spinner .mini-spin {
+      width: 14px; height: 14px; border: 2px solid #e2e8f0;
+      border-top-color: #3b82f6; border-radius: 50%;
+      animation: spin .6s linear infinite; flex-shrink: 0;
+    }
+
+    /* ── filter input ── */
+    .filter-input {
+      border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 12px;
+      font-size: .85rem; color: #0f172a; outline: none; width: 220px;
+    }
+    .filter-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+
+    /* ── refresh button ── */
+    .btn-refresh {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+      padding: 7px 14px; font-size: .82rem; font-weight: 500; color: #334155;
+      cursor: pointer; transition: all .15s;
+    }
+    .btn-refresh:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+    .btn-refresh.loading { opacity: .55; pointer-events: none; }
+
+    /* ── error banner ── */
+    #error-banner {
+      display: none;
+      background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px;
+      padding: 14px 18px; color: #b91c1c; font-size: .85rem;
+      margin-bottom: 20px;
+    }
+
+    /* ── chart canvas max height ── */
+    .chart-wrap { position: relative; }
+  </style>
+</head>
+
+<body class="min-h-screen">
+
+  <!-- ── Loading overlay ─────────────────────────────────────────────────── -->
+  <div id="loader-overlay">
+    <div class="spinner"></div>
+    <p class="text-slate-500 text-sm font-medium">Fetching data from Jira…</p>
+  </div>
+
+  <!-- ── Drilldown drawer ────────────────────────────────────────────────── -->
+  <div id="drawer-overlay"></div>
+  <aside id="drawer" role="dialog" aria-modal="true">
+    <div id="drawer-header">
+      <div>
+        <p class="text-xs text-slate-400 font-medium mb-0.5" id="drawer-subtitle"></p>
+        <h2 class="text-base font-semibold text-slate-900 leading-tight" id="drawer-title">Plans</h2>
+      </div>
+      <button id="drawer-close" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="drawer-body"></div>
+  </aside>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="bg-slate-900 text-white sticky top-0 z-40 border-b border-slate-800">
+    <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="bg-blue-600 rounded-lg w-8 h-8 flex items-center justify-center text-sm font-bold select-none">R</div>
+        <div>
+          <h1 class="text-sm font-semibold leading-tight">R2026 Reconciliation</h1>
+          <p class="text-xs text-slate-400 leading-tight">Annual Reconciliation Dashboard</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div id="last-updated" class="text-xs text-slate-400 hidden">
+          <span class="mr-1 text-slate-500">Updated</span><span id="updated-time">–</span>
+        </div>
+        <button id="refresh-btn" class="btn-refresh bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main class="max-w-screen-xl mx-auto px-6 py-8 space-y-6">
+
+    <!-- Error banner -->
+    <div id="error-banner" role="alert">
+      <strong>Could not load data.</strong> <span id="error-msg"></span>
+    </div>
+
+    <!-- ── KPI row ──────────────────────────────────────────────────────── -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+
+      <!-- Total Plans -->
+      <div class="card flex items-start gap-4">
+        <div class="kpi-icon bg-blue-50 text-blue-600">📋</div>
+        <div class="flex-1 min-w-0">
+          <div class="kpi-value text-slate-900" id="kpi-total">–</div>
+          <div class="kpi-label">Total Plans</div>
+          <div class="kpi-sub" id="kpi-status-breakdown">–</div>
+        </div>
+      </div>
+
+      <!-- Fully Reconciled -->
+      <div class="card flex items-start gap-4">
+        <div class="kpi-icon bg-green-50 text-green-600">✅</div>
+        <div class="flex-1 min-w-0">
+          <div class="kpi-value text-green-600" id="kpi-reconciled">–</div>
+          <div class="kpi-label">Fully Reconciled</div>
+          <div class="progress-track">
+            <div class="progress-fill bg-green-500" id="kpi-rec-bar" style="width:0%"></div>
+          </div>
+          <div class="kpi-sub" id="kpi-rec-pct">–</div>
+        </div>
+      </div>
+
+      <!-- Task Progress -->
+      <div class="card flex items-start gap-4">
+        <div class="kpi-icon bg-indigo-50 text-indigo-600">📊</div>
+        <div class="flex-1 min-w-0">
+          <div class="kpi-value text-indigo-600" id="kpi-pct">–</div>
+          <div class="kpi-label">Task Progress</div>
+          <div class="progress-track">
+            <div class="progress-fill bg-indigo-500" id="kpi-task-bar" style="width:0%"></div>
+          </div>
+          <div class="kpi-sub" id="kpi-tasks-detail">–</div>
+        </div>
+      </div>
+
+      <!-- Census Submitted -->
+      <div class="card flex items-start gap-4">
+        <div class="kpi-icon bg-teal-50 text-teal-600">🗂️</div>
+        <div class="flex-1 min-w-0">
+          <div class="kpi-value text-teal-600" id="kpi-census">–</div>
+          <div class="kpi-label">Census Submitted to RK</div>
+          <div class="kpi-sub">Validate Employee Census<br>+ Submit DMGY File (done)</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Charts row 1: Quarters + Ring ───────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+      <!-- Quarter breakdown (3/5 width) -->
+      <div class="card lg:col-span-3">
+        <div class="section-title">Progress by Quarter</div>
+        <div class="section-sub mb-5">Q1 – Q4 task completion across all plans</div>
+        <div class="chart-wrap" style="height:210px">
+          <canvas id="quarterChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Overall ring (2/5 width) -->
+      <div class="card lg:col-span-2 flex flex-col">
+        <div class="section-title">Whole Project</div>
+        <div class="section-sub mb-2">All tasks combined</div>
+        <div class="flex-1 flex items-center justify-center">
+          <div class="chart-wrap w-full" style="max-width:240px; height:210px; margin: 0 auto;">
+            <canvas id="donutChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Charts row 2: OPS ─────────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 gap-4">
+      <div class="card">
+        <div class="section-title">OPS — Pending Quarter Tasks</div>
+        <div class="section-sub mb-5">Q1–Q4 done vs pending per Operations analyst</div>
+        <div class="chart-wrap" id="ops-chart-wrap" style="height:300px">
+          <canvas id="opsChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Charts row 3: Weekly velocity (3 charts) ──────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <div class="card">
+        <div class="section-title">Plans Fully Reconciled — by Week</div>
+        <div class="section-sub mb-5">Plans reaching 100% per calendar week</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="weeklyPlansChart"></canvas>
+        </div>
+        <p id="weekly-plans-empty" class="text-center text-slate-400 text-sm mt-4 hidden">
+          No fully reconciled plans yet.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Q Tasks Done — by Week</div>
+        <div class="section-sub mb-5">Q1–Q4 tasks marked Done per calendar week</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="weeklyQChart"></canvas>
+        </div>
+        <p id="weekly-q-empty" class="text-center text-slate-400 text-sm mt-4 hidden">
+          No Q tasks completed yet.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Census Submitted to RK — by Week</div>
+        <div class="section-sub mb-5">Validate Employee Census &amp; Submit DMGY File done per week</div>
+        <div class="chart-wrap" style="height:220px">
+          <canvas id="weeklyCensusChart"></canvas>
+        </div>
+        <p id="weekly-census-empty" class="text-center text-slate-400 text-sm mt-4 hidden">
+          No census tasks completed yet.
+        </p>
+      </div>
+
+    </div>
+
+    <!-- ── Census breakdown tables ─────────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <!-- Audit plans -->
+      <div class="card">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="inline-flex items-center gap-1.5 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-full">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Audit Plans
+          </span>
+          <span class="text-slate-400 text-xs" id="census-audit-count"></span>
+        </div>
+        <div class="section-title">Submit Census File to RK</div>
+        <div class="section-sub mb-4">Plans marked as Audit — Validate Employee Census &amp; Submit DMGY File tasks</div>
+        <div class="overflow-x-auto">
+          <table class="dash-table" id="census-audit-table">
+            <thead id="census-audit-head"></thead>
+            <tbody id="census-audit-body">
+              <tr><td colspan="6" class="text-center text-slate-400 py-6">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Non-audit plans -->
+      <div class="card">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="inline-flex items-center gap-1.5 text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-full">
+            Non-Audit Plans
+          </span>
+          <span class="text-slate-400 text-xs" id="census-nonaudit-count"></span>
+        </div>
+        <div class="section-title">Submit Census File to RK</div>
+        <div class="section-sub mb-4">Plans not marked as Audit — Validate Employee Census &amp; Submit DMGY File tasks</div>
+        <div class="overflow-x-auto">
+          <table class="dash-table" id="census-nonaudit-table">
+            <thead id="census-nonaudit-head"></thead>
+            <tbody id="census-nonaudit-body">
+              <tr><td colspan="6" class="text-center text-slate-400 py-6">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Fully reconciled plans table ────────────────────────────────── -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <div>
+          <div class="section-title">Plans Fully Reconciled <span id="fr-count" class="text-slate-400 font-normal text-sm ml-1">(0)</span></div>
+          <div class="section-sub">All child tasks completed</div>
+        </div>
+        <input
+          id="fr-filter"
+          class="filter-input"
+          type="search"
+          placeholder="Filter by plan, symlink, OPS…"
+        />
+      </div>
+      <div class="overflow-x-auto">
+        <table class="dash-table" id="fr-table">
+          <thead>
+            <tr>
+              <th>Plan ID</th>
+              <th>Symlink</th>
+              <th>OPS</th>
+              <th>Jira Key</th>
+            </tr>
+          </thead>
+          <tbody id="fr-body">
+            <tr><td colspan="4" class="text-center text-slate-400 py-8">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p id="fr-empty" class="text-center text-slate-400 text-sm py-8 hidden">
+        No plans fully reconciled yet.
+      </p>
+    </div>
+
+  </main>
+
+  <!-- ── JS ──────────────────────────────────────────────────────────────── -->
+  <script>
+  (() => {
+    'use strict';
+
+    // ── colour palette ──────────────────────────────────────────────────────
+    const C = {
+      green:   '#22c55e',
+      greenDim:'#86efac',
+      pending: '#94a3b8',
+      orange:  '#f97316',
+      blue:    '#3b82f6',
+      indigo:  '#6366f1',
+      teal:    '#14b8a6',
+      grid:    '#f1f5f9',
+      text:    '#64748b',
+    };
+
+    // Chart.js global defaults
+    Chart.defaults.font.family = 'Inter, ui-sans-serif';
+    Chart.defaults.font.size   = 12;
+    Chart.defaults.color       = C.text;
+    Chart.defaults.plugins.legend.labels.boxWidth  = 10;
+    Chart.defaults.plugins.legend.labels.padding   = 16;
+    Chart.defaults.plugins.legend.labels.usePointStyle = true;
+    Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
+
+    // ── state ────────────────────────────────────────────────────────────────
+    let charts    = {};
+    let allFRRows = [];
+
+    // ── DOM refs ─────────────────────────────────────────────────────────────
+    const loader      = document.getElementById('loader-overlay');
+    const refreshBtn  = document.getElementById('refresh-btn');
+    const errorBanner = document.getElementById('error-banner');
+    const errorMsg    = document.getElementById('error-msg');
+    const updatedTime = document.getElementById('updated-time');
+    const lastUpdated = document.getElementById('last-updated');
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+    function showLoader(msg) {
+      loader.querySelector('p').textContent = msg || 'Fetching data from Jira…';
+      loader.style.display = 'flex';
+    }
+    function hideLoader() { loader.style.display = 'none'; }
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorBanner.style.display = 'block';
+    }
+    function hideError() { errorBanner.style.display = 'none'; }
+
+    function fmt(n) { return n?.toLocaleString() ?? '–'; }
+
+    function destroyChart(id) {
+      if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+    }
+
+    // ── KPIs ──────────────────────────────────────────────────────────────────
+    function renderKPIs(s) {
+      document.getElementById('kpi-total').textContent       = fmt(s.total_plans);
+      document.getElementById('kpi-status-breakdown').innerHTML =
+        `<span class="text-emerald-600 font-medium">${fmt(s.in_progress)}</span> in progress · ` +
+        `<span class="text-slate-400">${fmt(s.not_started)}</span> not started`;
+
+      document.getElementById('kpi-reconciled').textContent  = fmt(s.fully_reconciled);
+      const recPct = s.total_plans ? (s.fully_reconciled / s.total_plans * 100).toFixed(1) : 0;
+      document.getElementById('kpi-rec-bar').style.width     = recPct + '%';
+      document.getElementById('kpi-rec-pct').textContent     = `${recPct}% of plans`;
+
+      document.getElementById('kpi-pct').textContent         = s.task_pct + '%';
+      document.getElementById('kpi-task-bar').style.width    = s.task_pct + '%';
+      document.getElementById('kpi-tasks-detail').textContent =
+        `${fmt(s.done_tasks)} / ${fmt(s.total_tasks)} tasks done`;
+
+      document.getElementById('kpi-census').textContent      = fmt(s.census_submitted);
+    }
+
+    // ── Quarter chart (horizontal stacked bar) ────────────────────────────────
+    function renderQuarterChart(quarters) {
+      destroyChart('quarter');
+      const labels = quarters.map(q => q.quarter);
+      const done   = quarters.map(q => q.done);
+      const pend   = quarters.map(q => q.pending);
+
+      charts.quarter = new Chart(document.getElementById('quarterChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Done',    data: done, backgroundColor: C.green,   borderRadius: 4, borderSkipped: false },
+            { label: 'Pending', data: pend, backgroundColor: C.pending, borderRadius: 4, borderSkipped: false },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: {
+              callbacks: {
+                label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.raw)}`,
+              },
+            },
+          },
+          scales: {
+            x: { stacked: true, grid: { color: C.grid }, border: { display: false } },
+            y: { stacked: true, grid: { display: false }, border: { display: false } },
+          },
+        },
+      });
+    }
+
+    // ── Donut chart (overall progress) ───────────────────────────────────────
+    function renderDonutChart(s) {
+      destroyChart('donut');
+      const done = s.done_tasks;
+      const rem  = s.total_tasks - done;
+
+      charts.donut = new Chart(document.getElementById('donutChart'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Done', 'Remaining'],
+          datasets: [{
+            data: [done, rem],
+            backgroundColor: [C.indigo, '#e2e8f0'],
+            borderWidth: 0,
+            hoverOffset: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '68%',
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: {
+              callbacks: { label: ctx => ` ${ctx.label}: ${fmt(ctx.raw)} tasks` },
+            },
+          },
+        },
+        plugins: [{
+          id: 'centerText',
+          afterDraw(chart) {
+            const { ctx, chartArea: { width, height, top } } = chart;
+            ctx.save();
+            const cx = width / 2;
+            const cy = top + height / 2;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = '700 26px Inter, ui-sans-serif';
+            ctx.fillStyle = '#0f172a';
+            ctx.fillText(`${s.task_pct}%`, cx, cy - 8);
+            ctx.font = '400 11px Inter, ui-sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText('of tasks done', cx, cy + 14);
+            ctx.restore();
+          },
+        }],
+      });
+    }
+
+    // ── OPS chart (horizontal stacked bar) ───────────────────────────────────
+    function renderOpsChart(ops) {
+      destroyChart('ops');
+      if (!ops.length) return;
+
+      // Sort by pending desc (already sorted server-side, just re-confirm)
+      const sorted = [...ops].sort((a, b) => b.pending - a.pending);
+      const labels = sorted.map(o => o.name);
+      const done   = sorted.map(o => o.done);
+      const pend   = sorted.map(o => o.pending);
+
+      // Dynamic height: 44px per person + padding
+      const h = Math.max(280, labels.length * 44 + 60);
+      document.getElementById('ops-chart-wrap').style.height = h + 'px';
+
+      charts.ops = new Chart(document.getElementById('opsChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Done',    data: done, backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
+            { label: 'Pending', data: pend, backgroundColor: C.orange, borderRadius: 4, borderSkipped: false },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: {
+              callbacks: {
+                title: ctx => ctx[0].label,
+                label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.raw)} Q tasks`,
+              },
+            },
+          },
+          scales: {
+            x: { stacked: true, grid: { color: C.grid }, border: { display: false } },
+            y: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { font: { size: 11 } } },
+          },
+        },
+      });
+    }
+
+    // ── Weekly velocity charts (line) ─────────────────────────────────────────
+    function renderWeeklyChart(config) {
+      const {
+        chartId, canvasId, weekly, emptyId,
+        datasetLabel, lineColor, tooltipUnit,
+      } = config;
+
+      destroyChart(chartId);
+      const emptyEl = document.getElementById(emptyId);
+
+      if (!weekly.length) {
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+      emptyEl.classList.add('hidden');
+
+      const labels = weekly.map(w => w.week_label);
+      const counts = weekly.map(w => w.count);
+
+      charts[chartId] = new Chart(document.getElementById(canvasId), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: datasetLabel,
+            data: counts,
+            borderColor: lineColor,
+            backgroundColor: lineColor + '22',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: lineColor,
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1.5,
+            fill: true,
+            tension: 0.25,
+            spanGaps: false,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: ctx => `Week of ${ctx[0].label}`,
+                label: ctx => {
+                  const n = ctx.raw;
+                  const unit = n === 1 ? tooltipUnit.singular : tooltipUnit.plural;
+                  return ` ${fmt(n)} ${unit}`;
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              border: { display: false },
+              ticks: { font: { size: 10 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 8 },
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: C.grid },
+              border: { display: false },
+              ticks: { stepSize: 1, precision: 0 },
+            },
+          },
+        },
+      });
+    }
+
+    function renderWeeklyCharts(data) {
+      renderWeeklyChart({
+        chartId: 'weeklyPlans',
+        canvasId: 'weeklyPlansChart',
+        weekly: data.weekly || [],
+        emptyId: 'weekly-plans-empty',
+        datasetLabel: 'Plans reconciled',
+        lineColor: C.blue,
+        tooltipUnit: { singular: 'plan', plural: 'plans' },
+      });
+      renderWeeklyChart({
+        chartId: 'weeklyQ',
+        canvasId: 'weeklyQChart',
+        weekly: data.weekly_q_tasks || [],
+        emptyId: 'weekly-q-empty',
+        datasetLabel: 'Q tasks done',
+        lineColor: C.green,
+        tooltipUnit: { singular: 'Q task', plural: 'Q tasks' },
+      });
+      renderWeeklyChart({
+        chartId: 'weeklyCensus',
+        canvasId: 'weeklyCensusChart',
+        weekly: data.weekly_census_tasks || [],
+        emptyId: 'weekly-census-empty',
+        datasetLabel: 'Census tasks done',
+        lineColor: C.teal,
+        tooltipUnit: { singular: 'census task', plural: 'census tasks' },
+      });
+    }
+
+    // ── Drilldown drawer ──────────────────────────────────────────────────────
+    const drawer        = document.getElementById('drawer');
+    const drawerOverlay = document.getElementById('drawer-overlay');
+    const drawerTitle   = document.getElementById('drawer-title');
+    const drawerSub     = document.getElementById('drawer-subtitle');
+    const drawerBody    = document.getElementById('drawer-body');
+
+    function openDrawer(tasks, titleText, subtitleText) {
+      drawerTitle.textContent = titleText;
+      drawerSub.textContent   = subtitleText;
+      drawerBody.innerHTML    = '';
+
+      if (!tasks.length) {
+        drawerBody.innerHTML = '<p class="text-center text-slate-400 text-sm py-10">No plans found.</p>';
+      } else {
+        tasks.forEach(t => {
+          const el = document.createElement('div');
+          el.className = 'plan-row';
+          el.dataset.taskKey = t.task_key;
+          el.innerHTML = `
+            <div class="plan-meta">
+              <span class="font-mono text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">${t.plan_id}</span>
+              <span class="font-semibold text-slate-800 text-sm">${t.symlink}</span>
+              <a href="${JIRA_BASE}/browse/${t.task_key}" target="_blank" rel="noopener"
+                 class="badge badge-blue text-xs hover:opacity-75 transition-opacity ml-auto">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                ${t.task_key}
+              </a>
+            </div>
+            <div class="comments-area">
+              <div class="comments-spinner">
+                <div class="mini-spin"></div>
+                <span>Loading comments…</span>
+              </div>
+            </div>`;
+          drawerBody.appendChild(el);
+        });
+
+        // Fetch comments for all tasks in one call
+        const keys = tasks.map(t => t.task_key).join(',');
+        fetch(`/api/task-details?keys=${encodeURIComponent(keys)}`)
+          .then(r => r.json())
+          .then(details => {
+            const byKey = {};
+            details.forEach(d => { byKey[d.key] = d; });
+
+            drawerBody.querySelectorAll('.plan-row').forEach(row => {
+              const key      = row.dataset.taskKey;
+              const detail   = byKey[key];
+              const area     = row.querySelector('.comments-area');
+
+              if (!detail) {
+                area.innerHTML = '';
+                return;
+              }
+
+              if (!detail.comments || !detail.comments.length) {
+                area.innerHTML = '<p class="text-xs text-slate-400 mt-1 italic">No comments</p>';
+                return;
+              }
+
+              area.innerHTML = detail.comments.map(c => `
+                <div class="comment-bubble">
+                  <div class="comment-meta">${c.author} · ${c.date}</div>
+                  <div class="comment-text">${escHtml(c.text)}</div>
+                </div>`).join('');
+            });
+          })
+          .catch(() => {
+            drawerBody.querySelectorAll('.comments-area').forEach(a => {
+              a.innerHTML = '<p class="text-xs text-red-400 mt-1">Could not load comments.</p>';
+            });
+          });
+      }
+
+      drawer.classList.add('open');
+      drawerOverlay.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove('open');
+      drawerOverlay.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+
+    document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+    drawerOverlay.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+    function escHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Census breakdown tables ───────────────────────────────────────────────
+    let _jiraBase = '';   // set from API response
+
+    function renderCensusTables(cb) {
+      const statuses = Object.keys(cb.status_labels);
+      const labels   = cb.status_labels;
+
+      const STATUS_TH_COLOR = {
+        in_progress: 'text-blue-500',
+        done:        'text-green-600',
+        blocked:     'text-red-500',
+        to_do:       'text-slate-400',
+      };
+      const STATUS_CELL_CLS = {
+        in_progress: 'text-blue-600 bg-blue-50 font-semibold cursor-pointer hover:bg-blue-100 transition-colors rounded',
+        done:        'text-green-700 bg-green-50 font-semibold cursor-pointer hover:bg-green-100 transition-colors rounded',
+        blocked:     'text-red-600 bg-red-50 font-semibold cursor-pointer hover:bg-red-100 transition-colors rounded',
+        to_do:       'text-slate-600 font-semibold cursor-pointer hover:bg-slate-100 transition-colors rounded',
+      };
+
+      function buildTable(rows, headId, bodyId, countId, sectionLabel) {
+        if (!rows.length) return;
+
+        const dataRows = rows.filter(r => r.name !== '__total__');
+        document.getElementById(countId).textContent = `${dataRows.length} analysts`;
+
+        // Header
+        document.getElementById(headId).innerHTML = `<tr>
+          <th>Assignee</th>
+          ${statuses.map(s => `<th class="${STATUS_TH_COLOR[s]}">${labels[s]}</th>`).join('')}
+          <th>Total</th>
+        </tr>`;
+
+        // Body
+        document.getElementById(bodyId).innerHTML = rows.map(row => {
+          const isTotal = row.name === '__total__';
+
+          const nameCell = isTotal
+            ? `<td class="font-bold text-slate-800 border-t border-slate-200 pt-3">Total</td>`
+            : `<td class="font-medium text-slate-700">${row.name}</td>`;
+
+          const dataCells = statuses.map(s => {
+            const cell  = row[s];
+            const count = typeof cell === 'object' ? cell.count : (cell || 0);
+            const tasks = typeof cell === 'object' ? cell.tasks : [];
+
+            if (isTotal) {
+              return `<td class="border-t border-slate-200 pt-3 font-semibold text-slate-700">${count || '<span class="text-slate-300">0</span>'}</td>`;
+            }
+            if (count === 0) {
+              return `<td><span class="text-slate-300">0</span></td>`;
+            }
+            // Clickable cell — store task data in JS Map to avoid HTML-escaping issues
+            const cellId = `c${_cellSeq++}`;
+            _cellStore.set(cellId, {
+              tasks,
+              title: `${row.name} — ${labels[s]} (${count})`,
+              sub:   `${sectionLabel} · ${labels[s]}`,
+            });
+            return `<td>
+              <span class="${STATUS_CELL_CLS[s]} px-2 py-0.5 text-sm"
+                    role="button" tabindex="0"
+                    data-cell-id="${cellId}"
+                    onclick="handleCellClick(this)"
+                    onkeydown="if(event.key==='Enter'||event.key===' ')handleCellClick(this)">
+                ${count}
+              </span>
+            </td>`;
+          }).join('');
+
+          const totalCount = typeof row.total === 'number' ? row.total : 0;
+          const totalCell  = isTotal
+            ? `<td class="border-t border-slate-200 pt-3 font-bold text-slate-900">${totalCount}</td>`
+            : `<td class="font-semibold text-slate-600">${totalCount}</td>`;
+
+          return `<tr>${nameCell}${dataCells}${totalCell}</tr>`;
+        }).join('');
+      }
+
+      buildTable(cb.audit,     'census-audit-head',    'census-audit-body',    'census-audit-count',    'Audit Plans');
+      buildTable(cb.non_audit, 'census-nonaudit-head', 'census-nonaudit-body', 'census-nonaudit-count', 'Non-Audit Plans');
+    }
+
+    // Cell data store — avoids embedding JSON with quotes inside HTML attributes
+    const _cellStore = new Map();
+    let   _cellSeq   = 0;
+
+    // Global handler for cell clicks (called from inline onclick)
+    window.handleCellClick = function(el) {
+      const id   = el.dataset.cellId;
+      const rec  = _cellStore.get(id) || {};
+      openDrawer(rec.tasks || [], rec.title || 'Plans', rec.sub || '');
+    };
+
+    // ── Fully reconciled table ────────────────────────────────────────────────
+    function renderTable(plans) {
+      allFRRows = plans;
+      document.getElementById('fr-count').textContent = `(${plans.length})`;
+      applyFilter('');
+    }
+
+    function applyFilter(query) {
+      const q   = query.toLowerCase().trim();
+      const rows = q
+        ? allFRRows.filter(p =>
+            p.plan_id.includes(q) || p.symlink.toLowerCase().includes(q) ||
+            p.ops.toLowerCase().includes(q) || p.key.toLowerCase().includes(q))
+        : allFRRows;
+
+      const tbody  = document.getElementById('fr-body');
+      const empty  = document.getElementById('fr-empty');
+
+      if (!rows.length) {
+        tbody.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      tbody.innerHTML = rows.map(p => `
+        <tr>
+          <td><span class="font-mono text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">${p.plan_id}</span></td>
+          <td class="font-medium text-slate-700">${p.symlink}</td>
+          <td>${p.ops}</td>
+          <td>
+            <a href="${p.url}" target="_blank" rel="noopener"
+               class="badge badge-blue hover:opacity-80 transition-opacity">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              ${p.key}
+            </a>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // ── Main render ───────────────────────────────────────────────────────────
+    let JIRA_BASE = 'https://forusall401k.atlassian.net';   // default, overwritten from API
+
+    function renderAll(data) {
+      hideError();
+      if (data.jira_base) JIRA_BASE = data.jira_base;
+      renderKPIs(data.summary);
+      renderQuarterChart(data.quarters);
+      renderDonutChart(data.summary);
+      renderOpsChart(data.ops);
+      renderWeeklyCharts(data);
+      if (data.census_breakdown) renderCensusTables(data.census_breakdown);
+      renderTable(data.fully_reconciled_plans);
+
+      updatedTime.textContent = data.fetched_at;
+      lastUpdated.classList.remove('hidden');
+    }
+
+    // ── Fetch ─────────────────────────────────────────────────────────────────
+    async function load(force = false) {
+      showLoader(force ? 'Refreshing from Jira…' : 'Fetching data from Jira…');
+      refreshBtn.classList.add('loading');
+      refreshBtn.querySelector('svg').style.animation = 'spin .75s linear infinite';
+      hideError();
+
+      try {
+        const url  = force ? '/api/dashboard?refresh=true' : '/api/dashboard';
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(body.detail || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        renderAll(data);
+      } catch (err) {
+        showError(err.message || 'Unknown error');
+      } finally {
+        hideLoader();
+        refreshBtn.classList.remove('loading');
+        refreshBtn.querySelector('svg').style.animation = '';
+      }
+    }
+
+    // ── Event listeners ───────────────────────────────────────────────────────
+    refreshBtn.addEventListener('click', () => load(true));
+
+    document.getElementById('fr-filter').addEventListener('input', e => {
+      applyFilter(e.target.value);
+    });
+
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    load(false);
+
+  })();
+  </script>
+</body>
+</html>
