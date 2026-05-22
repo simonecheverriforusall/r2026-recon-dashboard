@@ -56,13 +56,13 @@ Open it — you should see the dashboard (first load may take ~30s on the free t
 
 **→ Full click-by-click guide: [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)**
 
-Custom domain **`recon.forusall.com`** is already registered on Render. You only need:
+Custom domain **`r2026.forusall.com`** is already registered on Render. You only need:
 
-1. **Cloudflare DNS** — CNAME `recon` → `r2026-recon-dashboard.onrender.com` (proxied)
+1. **Cloudflare DNS** — CNAME `r2026` → `r2026-recon-dashboard.onrender.com` (proxied)
 2. **Google Workspace IdP** in Zero Trust (Internal OAuth, domain `forusall.com`)
-3. **Access app** on `recon.forusall.com` with allow policy for `@forusall.com`
+3. **Access app** on `r2026.forusall.com` with allow policy for `@forusall.com`
 
-Share **https://recon.forusall.com** with the team (not the `.onrender.com` URL).
+Share **https://r2026.forusall.com** with the team (not the `.onrender.com` URL).
 
 ---
 

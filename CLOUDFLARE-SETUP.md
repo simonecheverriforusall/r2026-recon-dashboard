@@ -1,16 +1,16 @@
-# Cloudflare Access setup — `recon.forusall.com`
+# Cloudflare Access setup — `r2026.forusall.com`
 
 Protect the dashboard so only `@forusall.com` Google Workspace users can open it.
 
 **Live Render URL (no auth):** https://r2026-recon-dashboard.onrender.com  
-**Target URL (with auth):** https://recon.forusall.com
+**Target URL (with auth):** https://r2026.forusall.com
 
 ---
 
 ## Overview (do in this order)
 
 ```
-User → recon.forusall.com (Cloudflare DNS, proxied)
+User → r2026.forusall.com (Cloudflare DNS, proxied)
      → Cloudflare Access (Google Workspace login, @forusall.com only)
      → r2026-recon-dashboard.onrender.com (Render)
 ```
@@ -27,7 +27,7 @@ You need admin access to the **forusall.com** zone in Cloudflare.
    | Field | Value |
    |-------|-------|
    | Type | `CNAME` |
-   | Name | `recon` |
+   | Name | `r2026` |
    | Target | `r2026-recon-dashboard.onrender.com` |
    | Proxy status | **Proxied** (orange cloud ON) |
    | TTL | Auto |
@@ -41,7 +41,7 @@ You need admin access to the **forusall.com** zone in Cloudflare.
 ## Step 2 — Custom domain on Render (~2 min)
 
 1. Open [Render service → Settings → Custom Domains](https://dashboard.render.com/web/srv-d88c21i8qa3s73f5aeqg/settings).
-2. Confirm **`recon.forusall.com`** is listed (already added via CLI).
+2. Confirm **`r2026.forusall.com`** is listed (already added via CLI).
 3. Render will verify the CNAME once DNS propagates (usually a few minutes).
 4. Wait until status shows **Verified** / certificate issued.
 
@@ -102,9 +102,9 @@ Use **Google Workspace** (not generic “Google”) so only your company domain 
 3. **Application name:** `R2026 Recon Dashboard`
 4. **Session duration:** 24 hours (or your preference)
 5. **Application domain:**
-   - Subdomain: `recon`
+   - Subdomain: `r2026`
    - Domain: `forusall.com`
-   - (Full hostname: `recon.forusall.com`)
+   - (Full hostname: `r2026.forusall.com`)
 6. **Identity providers:** enable only **Google Workspace** (disable “Accept all available” if others are listed)
 7. **Add a policy** (Policy name: `ForUsAll employees`):
    - **Action:** Allow
@@ -117,12 +117,12 @@ Use **Google Workspace** (not generic “Google”) so only your company domain 
 ## Step 6 — Test
 
 1. Open an **incognito** window.
-2. Go to https://recon.forusall.com
+2. Go to https://r2026.forusall.com
 3. You should see Cloudflare Access login → **Sign in with Google Workspace**.
 4. Sign in with your `@forusall.com` account → dashboard loads.
 5. Try a personal `@gmail.com` account → should be **denied**.
 
-Direct Render URL (`r2026-recon-dashboard.onrender.com`) will still work **without** auth. Share only `recon.forusall.com` with the team.
+Direct Render URL (`r2026-recon-dashboard.onrender.com`) will still work **without** auth. Share only `r2026.forusall.com` with the team.
 
 ---
 
