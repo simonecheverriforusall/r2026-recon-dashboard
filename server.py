@@ -29,6 +29,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 # ── env ───────────────────────────────────────────────────────────────────────
@@ -441,41 +442,36 @@ def _app_base_url(request: Request) -> str:
 
 app = FastAPI(title="R2026 Reconciliation Dashboard API")
 
-if not SESSION_SECRET and REQUIRE_AUTH:
-    SESSION_SECRET = secrets.token_urlsafe(32)
-
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET or secrets.token_urlsafe(32))
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
+_session_secret = SESSION_SECRET or secrets.token_urlsafe(32)
 
 
-@app.middleware("http")
-async def require_google_auth(request: Request, call_next):
-    if not REQUIRE_AUTH:
-        return await call_next(request)
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not REQUIRE_AUTH:
+            return await call_next(request)
 
-    path = request.url.path
-    if path in AUTH_PUBLIC_PATHS:
-        return await call_next(request)
+        path = request.url.path
+        if path in AUTH_PUBLIC_PATHS:
+            return await call_next(request)
 
-    if not _auth_configured():
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "Auth not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET."},
-        )
+        if not _auth_configured():
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Auth not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET."},
+            )
 
-    user = request.session.get("user")
-    if user and _email_allowed(user.get("email", "")):
-        return await call_next(request)
+        user = request.session.get("user")
+        if user and _email_allowed(user.get("email", "")):
+            return await call_next(request)
 
-    if path.startswith("/api/"):
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-    return RedirectResponse("/auth/login")
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        return RedirectResponse("/auth/login", status_code=302)
+
+
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+app.add_middleware(AuthMiddleware)
+app.add_middleware(SessionMiddleware, secret_key=_session_secret)
 
 
 @app.get("/auth/login")
