@@ -137,6 +137,8 @@ Results are cached in-memory for **5 minutes**. Click **🔄 Refresh** in the he
 | Plan ID | `customfield_11661` | Used to identify plans |
 | Symlink | `customfield_11662` | |
 | OPS | `customfield_11675` | Assignee email |
+| Record Keeper | `customfield_11680` | |
+| Off calendar | `customfield_11671` | Yes = off-calendar plan |
 | Audit | `customfield_11667` | TRUE = `11683`, FALSE = `11684` |
 
 ### Task name classification

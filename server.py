@@ -50,12 +50,15 @@ APP_BASE_URL         = os.environ.get("APP_BASE_URL", "").rstrip("/")
 AUTH_PUBLIC_PATHS = {"/api/health", "/auth/login", "/auth/callback"}
 
 # ── Jira custom fields (R2026) ────────────────────────────────────────────────
-OPS_CF     = "customfield_11675"
-PLAN_ID_CF = "customfield_11661"
-SYMLINK_CF = "customfield_11662"
-AUDIT_CF   = "customfield_11667"   # select field: TRUE=11683 / FALSE=11684
+OPS_CF          = "customfield_11675"
+PLAN_ID_CF      = "customfield_11661"
+SYMLINK_CF      = "customfield_11662"
+AUDIT_CF        = "customfield_11667"   # select: TRUE=11683 / FALSE=11684
+RK_CF           = "customfield_11680"   # Record Keeper (text)
+OFF_CALENDAR_CF = "customfield_11671"   # select: off-calendar Yes=11689 / No=11690
 
-AUDIT_TRUE_ID = "11683"
+AUDIT_TRUE_ID     = "11683"
+OFF_CAL_TRUE_ID   = "11689"
 
 PROJECT_START_WEEK = "2026-01-05"  # first Monday of 2026
 QUARTER_TASKS = {"Q1", "Q2", "Q3", "Q4"}
@@ -149,8 +152,26 @@ def _search_all(client: httpx.Client, jql: str, fields: list[str]) -> list[dict]
     return results
 
 
-def _build_dashboard() -> dict:
-    """Fetch Jira data and compute all dashboard metrics."""
+def _build_dashboard(
+    ops: str | None = None,
+    record_keeper: str | None = None,
+    calendar: str | None = None,
+    quarter: str | None = None,
+) -> dict:
+    """Fetch Jira data (or use flow) and compute metrics with optional filters."""
+    raw = _fetch_raw()
+    return _compute_dashboard(
+        raw["workstreams"],
+        raw["tasks"],
+        ops=ops,
+        record_keeper=record_keeper,
+        calendar=calendar,
+        quarter=quarter,
+    )
+
+
+def _fetch_raw() -> dict:
+    """Fetch and parse all workstreams and tasks from Jira."""
     auth    = (JIRA_EMAIL, JIRA_TOKEN)
     headers = {"Accept": "application/json"}
 
@@ -158,7 +179,10 @@ def _build_dashboard() -> dict:
         ws_issues = _search_all(
             client,
             f"project = {PROJECT} AND issuetype = Workstream ORDER BY created ASC",
-            ["key", "summary", "status", "resolutiondate", OPS_CF, PLAN_ID_CF, SYMLINK_CF, AUDIT_CF],
+            [
+                "key", "summary", "status", "resolutiondate",
+                OPS_CF, PLAN_ID_CF, SYMLINK_CF, AUDIT_CF, RK_CF, OFF_CALENDAR_CF,
+            ],
         )
         task_issues = _search_all(
             client,
@@ -166,21 +190,22 @@ def _build_dashboard() -> dict:
             ["key", "summary", "status", "parent", "resolutiondate"],
         )
 
-    # ── parse workstreams ─────────────────────────────────────────────────────
     workstreams: list[dict] = []
     for iss in ws_issues:
         f = iss["fields"]
         audit_raw = f.get(AUDIT_CF) or {}
+        off_cal_raw = f.get(OFF_CALENDAR_CF) or {}
         workstreams.append({
-            "key":     iss["key"],
-            "plan_id": str(f.get(PLAN_ID_CF) or "").strip(),
-            "symlink": str(f.get(SYMLINK_CF)  or "").strip(),
-            "ops":     str(f.get(OPS_CF)       or "").strip(),
-            "status":  (f.get("status") or {}).get("name", ""),
-            "audit":   audit_raw.get("id") == AUDIT_TRUE_ID,
+            "key":            iss["key"],
+            "plan_id":        str(f.get(PLAN_ID_CF) or "").strip(),
+            "symlink":        str(f.get(SYMLINK_CF) or "").strip(),
+            "ops":            str(f.get(OPS_CF) or "").strip(),
+            "record_keeper":  str(f.get(RK_CF) or "").strip(),
+            "off_calendar":   off_cal_raw.get("id") == OFF_CAL_TRUE_ID,
+            "status":         (f.get("status") or {}).get("name", ""),
+            "audit":          audit_raw.get("id") == AUDIT_TRUE_ID,
         })
 
-    # ── parse tasks ───────────────────────────────────────────────────────────
     tasks: list[dict] = []
     for iss in task_issues:
         f      = iss["fields"]
@@ -194,13 +219,76 @@ def _build_dashboard() -> dict:
             "resolutiondate": f.get("resolutiondate"),
         })
 
-    # ── enrich workstreams with per-ws task counts ────────────────────────────
+    return {"workstreams": workstreams, "tasks": tasks}
+
+
+def _filter_options(workstreams: list[dict]) -> dict:
+    ops = sorted({_ops_label(ws["ops"]) for ws in workstreams if ws.get("ops")}, key=str.lower)
+    rk  = sorted({ws["record_keeper"] for ws in workstreams if ws.get("record_keeper")}, key=str.lower)
+    return {
+        "ops":            ops,
+        "record_keeper":  rk,
+        "calendar": [
+            {"value": "on",  "label": "On calendar"},
+            {"value": "off", "label": "Off calendar"},
+        ],
+        "quarters": ["Q1", "Q2", "Q3", "Q4"],
+    }
+
+
+def _matches_ws_filters(
+    ws: dict,
+    ops: str | None,
+    record_keeper: str | None,
+    calendar: str | None,
+) -> bool:
+    if ops and _ops_label(ws.get("ops", "")) != ops:
+        return False
+    if record_keeper and ws.get("record_keeper", "") != record_keeper:
+        return False
+    if calendar == "on" and ws.get("off_calendar"):
+        return False
+    if calendar == "off" and not ws.get("off_calendar"):
+        return False
+    return True
+
+
+def _task_in_scope(t: dict, ws_keys: set[str], quarter: str | None) -> bool:
+    if t["parent_key"] not in ws_keys:
+        return False
+    if not quarter:
+        return True
+    if t["summary"] in QUARTER_TASKS:
+        return t["summary"] == quarter
+    if t["summary"] in CENSUS_TASKS:
+        return True
+    return False
+
+
+def _compute_dashboard(
+    all_workstreams: list[dict],
+    all_tasks: list[dict],
+    ops: str | None = None,
+    record_keeper: str | None = None,
+    calendar: str | None = None,
+    quarter: str | None = None,
+) -> dict:
+    """Compute dashboard metrics for a filtered subset of plans/tasks."""
+    quarter = quarter if quarter in QUARTER_TASKS else None
+
+    workstreams = [
+        ws for ws in all_workstreams
+        if _matches_ws_filters(ws, ops, record_keeper, calendar)
+    ]
+    ws_keys = {ws["key"] for ws in workstreams}
+    tasks   = [t for t in all_tasks if _task_in_scope(t, ws_keys, quarter)]
+
     tasks_by_ws: dict[str, list[dict]] = defaultdict(list)
     for t in tasks:
         tasks_by_ws[t["parent_key"]].append(t)
 
     for ws in workstreams:
-        ws_tasks           = tasks_by_ws[ws["key"]]
+        ws_tasks = tasks_by_ws[ws["key"]]
         ws["total_tasks"]  = len(ws_tasks)
         ws["done_tasks"]   = sum(1 for t in ws_tasks if t["done"])
         ws["fully_reconciled"] = (
@@ -218,11 +306,10 @@ def _build_dashboard() -> dict:
     census_done  = sum(1 for t in tasks if t["summary"] in CENSUS_TASKS and t["done"])
 
     # ── quarter breakdown ─────────────────────────────────────────────────────
-    q_counters: dict[str, dict[str, int]] = {
-        q: {"done": 0, "pending": 0} for q in ["Q1", "Q2", "Q3", "Q4"]
-    }
+    q_list = [quarter] if quarter else ["Q1", "Q2", "Q3", "Q4"]
+    q_counters: dict[str, dict[str, int]] = {q: {"done": 0, "pending": 0} for q in q_list}
     for t in tasks:
-        if t["summary"] in QUARTER_TASKS:
+        if t["summary"] in QUARTER_TASKS and t["summary"] in q_counters:
             key = "done" if t["done"] else "pending"
             q_counters[t["summary"]][key] += 1
 
@@ -277,7 +364,6 @@ def _build_dashboard() -> dict:
         elif t["summary"] in CENSUS_TASKS:
             weekly_census_counter[week] += 1
 
-    # Shared calendar-week range: project start → current week (zeros filled in)
     current_week = _monday_of(datetime.now(timezone.utc)).strftime("%Y-%m-%d")
     all_weeks = (
         set(weekly_plans_counter)
@@ -296,8 +382,6 @@ def _build_dashboard() -> dict:
     weekly_census_data  = _format_weekly(weekly_census_counter, start_week, current_week)
 
     # ── census breakdown by audit flag ───────────────────────────────────────
-    # Structure: census_bucket[is_audit][ops_label][norm_status] = [task_detail, ...]
-    # Each task_detail carries enough info to populate the drawer instantly.
     census_bucket: dict[bool, dict] = {
         True:  defaultdict(lambda: defaultdict(list)),
         False: defaultdict(lambda: defaultdict(list)),
@@ -320,9 +404,10 @@ def _build_dashboard() -> dict:
 
     def _census_table(bucket: dict) -> list[dict]:
         rows = []
-        for ops, status_dict in sorted(bucket.items(),
-                                        key=lambda x: -sum(len(v) for v in x[1].values())):
-            row: dict = {"name": ops}
+        for ops_name, status_dict in sorted(
+            bucket.items(), key=lambda x: -sum(len(v) for v in x[1].values())
+        ):
+            row: dict = {"name": ops_name}
             for s in _STATUS_ORDER:
                 items = status_dict.get(s, [])
                 row[s] = {"count": len(items), "tasks": items}
@@ -331,10 +416,7 @@ def _build_dashboard() -> dict:
         if rows:
             totals: dict = {"name": "__total__"}
             for s in _STATUS_ORDER:
-                totals[s] = {
-                    "count": sum(r[s]["count"] for r in rows),
-                    "tasks": [],   # total row is not drillable
-                }
+                totals[s] = {"count": sum(r[s]["count"] for r in rows), "tasks": []}
             totals["total"] = sum(r["total"] for r in rows)
             rows.append(totals)
         return rows
@@ -345,7 +427,6 @@ def _build_dashboard() -> dict:
         "status_labels": _STATUS_LABELS,
     }
 
-    # ── fully reconciled list ─────────────────────────────────────────────────
     fr_plans = [
         {
             "plan_id": ws["plan_id"],
@@ -372,6 +453,14 @@ def _build_dashboard() -> dict:
             "done_tasks":       done_tasks,
             "task_pct":         task_pct,
             "census_submitted": census_done,
+            "all_plans":        len(all_workstreams),
+        },
+        "filters":         _filter_options(all_workstreams),
+        "active_filters": {
+            "ops":            ops or "",
+            "record_keeper":  record_keeper or "",
+            "calendar":       calendar or "",
+            "quarter":        quarter or "",
         },
         "quarters":               quarters,
         "ops":                    ops_data,
@@ -381,6 +470,7 @@ def _build_dashboard() -> dict:
         "census_breakdown":       census_breakdown,
         "fully_reconciled_plans": fr_plans,
     }
+
 
 
 def _adf_to_text(node: object) -> str:
@@ -519,13 +609,16 @@ async def auth_logout(request: Request):
 
 
 @app.get("/api/dashboard")
-def get_dashboard(refresh: bool = Query(False)):
-    """Return pre-computed dashboard data (cached 5 min)."""
+def get_dashboard(
+    refresh: bool = Query(False),
+    ops: str | None = Query(None),
+    record_keeper: str | None = Query(None),
+    calendar: str | None = Query(None, description="on or off"),
+    quarter: str | None = Query(None, description="Q1, Q2, Q3, or Q4"),
+):
+    """Return dashboard data (cached raw Jira fetch 5 min; filters applied per request)."""
     global _cache
     now = time.time()
-
-    if not refresh and _cache.get("data") and (now - _cache.get("ts", 0)) < CACHE_TTL:
-        return _cache["data"]
 
     if not JIRA_EMAIL or not JIRA_TOKEN:
         raise HTTPException(
@@ -533,18 +626,30 @@ def get_dashboard(refresh: bool = Query(False)):
             detail="Jira credentials not configured. Check your .env file.",
         )
 
+    calendar = calendar if calendar in ("on", "off") else None
+    quarter  = quarter if quarter in QUARTER_TASKS else None
+
     try:
-        data = _build_dashboard()
+        if refresh or not _cache.get("raw") or (now - _cache.get("ts", 0)) >= CACHE_TTL:
+            _cache = {"raw": _fetch_raw(), "ts": now}
+        raw  = _cache["raw"]
+        data = _compute_dashboard(
+            raw["workstreams"],
+            raw["tasks"],
+            ops=ops or None,
+            record_keeper=record_keeper or None,
+            calendar=calendar,
+            quarter=quarter,
+        )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Jira API error: {exc}") from exc
 
-    _cache = {"data": data, "ts": now}
     return data
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "cached": bool(_cache.get("data"))}
+    return {"status": "ok", "cached": bool(_cache.get("raw"))}
 
 
 @app.get("/api/task-details")
