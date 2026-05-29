@@ -41,7 +41,29 @@ In Render → your service → **Environment**, add:
 | `JIRA_API_TOKEN` | *(from Atlassian API tokens)* |
 | `JIRA_PROJECT_KEY` | `R2026` |
 
-Do **not** commit `.env` to Git.
+Optional — Snowflake connectivity test (`GET /api/snowflake/test`, requires app login):
+
+| Key | Notes |
+|-----|--------|
+| `SNOWFLAKE_ENABLED` | `true` |
+| `SNOWFLAKE_ACCOUNT` | Account locator from `~/.snowflake/connections.toml` |
+| `SNOWFLAKE_USER` | Snowflake user |
+| `SNOWFLAKE_WAREHOUSE` | Warehouse |
+| `SNOWFLAKE_ROLE` | Optional read-only role |
+| `SNOWFLAKE_PRIVATE_KEY_BASE64` | `base64 -i ~/.snowflake/keys/cli_key.p8 \| tr -d '\n'` |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | Key passphrase (secret) |
+
+Do **not** commit `.env` or private keys to Git. `/api/health` does not call Snowflake.
+
+**Supabase (Communications):** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `COMMS_SYNC_SECRET`. See [SUPABASE.md](./SUPABASE.md).
+
+**Render cron (6h):** Create a cron job that runs:
+
+```bash
+curl -sf -X POST "https://<your-host>/api/communications/sync-all?secret=$COMMS_SYNC_SECRET"
+```
+
+Schedule: `0 */6 * * *`
 
 ### 5. Deploy
 

@@ -1,0 +1,12 @@
+# Supabase local dev — link remote: supabase link --project-ref <ref>
+# Apply migrations: supabase db push
+
+project_id = "recon-dashboard"
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+major_version = 15

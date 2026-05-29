@@ -182,6 +182,45 @@
     .filter-bar select:focus { border-color: #3b82f6; outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
     .filter-bar label { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #94a3b8; display: block; margin-bottom: 4px; }
 
+    .nav-tabs { display: flex; gap: 4px; margin-left: 24px; }
+    .nav-tab {
+      padding: 6px 14px; border-radius: 8px; font-size: .82rem; font-weight: 500;
+      color: #94a3b8; text-decoration: none; transition: all .15s;
+    }
+    .nav-tab:hover { color: #e2e8f0; background: rgba(255,255,255,.06); }
+    .nav-tab.active { color: #fff; background: rgba(59,130,246,.35); }
+    .nav-tab.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+
+    .plan-row-simple { padding: 10px 24px; border-bottom: 1px solid #f8fafc; }
+    .plan-row-simple:hover { background: #f8fafc; }
+
+    .check-ok { color: #16a34a; }
+    .check-fail { color: #94a3b8; }
+    .check-warn { color: #d97706; }
+    a.comms-gate-link { text-decoration: none; cursor: pointer; border-radius: 4px; padding: 0 2px; }
+    a.comms-gate-link:hover { text-decoration: underline; background: #f1f5f9; }
+    .comms-gate-filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .comms-gate-filters label {
+      display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; font-weight: 500;
+      color: #475569; text-transform: none; letter-spacing: 0; margin: 0; cursor: pointer;
+    }
+    .comms-gate-filters input { accent-color: #2563eb; }
+    .badge-eligible { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-pending { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+    #comms-modal-overlay {
+      position: fixed; inset: 0; background: rgba(15,23,42,.45);
+      z-index: 60; opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    #comms-modal-overlay.open { opacity: 1; pointer-events: all; }
+    #comms-modal {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.96);
+      z-index: 61; width: min(420px, 92vw); background: #fff; border-radius: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.25); padding: 24px;
+      opacity: 0; pointer-events: none; transition: all .2s;
+    }
+    #comms-modal.open { opacity: 1; pointer-events: all; transform: translate(-50%, -50%) scale(1); }
+
     /* ── refresh button ── */
     .btn-refresh {
       display: inline-flex; align-items: center; gap: 6px;
@@ -230,13 +269,17 @@
 
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
   <header class="bg-slate-900 text-white sticky top-0 z-40 border-b border-slate-800">
-    <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between">
-      <div class="flex items-center gap-3">
+    <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-3 flex-wrap">
         <div class="bg-blue-600 rounded-lg w-8 h-8 flex items-center justify-center text-sm font-bold select-none">R</div>
         <div>
           <h1 class="text-sm font-semibold leading-tight">R2026 Reconciliation</h1>
-          <p class="text-xs text-slate-400 leading-tight">Annual Reconciliation Dashboard</p>
+          <p class="text-xs text-slate-400 leading-tight">Annual Reconciliation</p>
         </div>
+        <nav class="nav-tabs" aria-label="Main">
+          <a href="#" id="nav-dashboard" class="nav-tab active" data-view="dashboard">Dashboard</a>
+          <a href="#" id="nav-communications" class="nav-tab" data-view="communications">Communications</a>
+        </nav>
       </div>
       <div class="flex items-center gap-4">
         <div id="last-updated" class="text-xs text-slate-400 hidden">
@@ -250,8 +293,8 @@
     </div>
   </header>
 
-  <!-- ── Main ────────────────────────────────────────────────────────────── -->
-  <main class="max-w-screen-xl mx-auto px-6 py-8 space-y-6">
+  <!-- ── Dashboard view ──────────────────────────────────────────────────── -->
+  <main id="view-dashboard" class="max-w-screen-xl mx-auto px-6 py-8 space-y-6">
 
     <!-- Error banner -->
     <div id="error-banner" role="alert">
@@ -354,7 +397,7 @@
       <!-- Quarter breakdown (3/5 width) -->
       <div class="card lg:col-span-3">
         <div class="section-title">Progress by Quarter</div>
-        <div class="section-sub mb-5">Q1 – Q4 task completion across all plans</div>
+        <div class="section-sub mb-5">Q1 – Q4 task completion · click a green bar to see done plans</div>
         <div class="chart-wrap" style="height:210px">
           <canvas id="quarterChart"></canvas>
         </div>
@@ -504,6 +547,110 @@
 
   </main>
 
+  <!-- ── Communications ─────────────────────────────────────────────────────── -->
+  <section id="view-communications" class="max-w-screen-xl mx-auto px-6 py-8 space-y-6 hidden">
+    <div class="card">
+      <div class="section-title mb-1">Send reconciliation communications</div>
+      <div class="section-sub mb-5">Confirm Snowflake recon, Jira Q task, and Drive file before sending via DevRev (template coming soon).</div>
+
+      <div class="filter-bar grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-xl items-end">
+        <div>
+          <label for="comms-filter-ops">OPS</label>
+          <select id="comms-filter-ops">
+            <option value="">Select OPS…</option>
+          </select>
+        </div>
+        <div>
+          <label for="comms-filter-quarter">Quarter</label>
+          <select id="comms-filter-quarter">
+            <option value="">Select quarter…</option>
+            <option value="Q1">Q1</option>
+            <option value="Q2">Q2</option>
+            <option value="Q3">Q3</option>
+            <option value="Q4">Q4</option>
+          </select>
+        </div>
+        <div>
+          <button type="button" id="comms-refresh-btn" class="btn-refresh bg-blue-600 border-blue-600 text-white hover:bg-blue-700 w-full">Sync gates</button>
+        </div>
+      </div>
+      <p id="comms-filter-summary" class="text-xs text-slate-500 mt-3"></p>
+    </div>
+
+    <div id="comms-empty" class="card text-center py-16 px-8">
+      <p class="text-slate-500">Select an OPS and quarter to view plans.</p>
+    </div>
+
+    <div id="comms-content" class="hidden space-y-4">
+      <div class="grid grid-cols-3 gap-4 max-w-lg">
+        <div class="card py-4 text-center">
+          <div class="text-2xl font-bold text-slate-800" id="comms-stat-total">0</div>
+          <div class="text-xs text-slate-500 mt-1">Plans</div>
+        </div>
+        <div class="card py-4 text-center">
+          <div class="text-2xl font-bold text-green-600" id="comms-stat-eligible">0</div>
+          <div class="text-xs text-slate-500 mt-1">Ready to send</div>
+        </div>
+        <div class="card py-4 text-center">
+          <div class="text-2xl font-bold text-slate-500" id="comms-stat-pending">0</div>
+          <div class="text-xs text-slate-500 mt-1">Not ready</div>
+        </div>
+      </div>
+
+      <div class="card space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-end gap-4 flex-wrap">
+          <div class="flex-1 min-w-[200px] max-w-md">
+            <label for="comms-search-symlink">Search symlink</label>
+            <input type="search" id="comms-search-symlink" class="filter-input w-full" placeholder="e.g. aescape" autocomplete="off" />
+          </div>
+          <div class="comms-gate-filters pb-1">
+            <span class="text-xs font-semibold uppercase tracking-wide text-slate-400 mr-1">Show only</span>
+            <label><input type="checkbox" id="comms-filter-sf" /> Snowflake ready</label>
+            <label><input type="checkbox" id="comms-filter-jira" /> Jira Q ready</label>
+            <label><input type="checkbox" id="comms-filter-drive" /> Drive ready</label>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="dash-table" id="comms-table">
+            <thead>
+              <tr>
+                <th>Plan ID</th>
+                <th>Symlink</th>
+                <th title="RECON_COMPLETE_DETAILS">Snowflake</th>
+                <th title="Jira Q task Done">Jira Q</th>
+                <th title="Required file on Drive">Drive</th>
+                <th>Sponsors</th>
+                <th>Ticket</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="comms-body"></tbody>
+          </table>
+        </div>
+        <p id="comms-loading" class="text-center text-slate-400 text-sm py-8 hidden">Loading…</p>
+        <p id="comms-no-plans" class="text-center text-slate-400 text-sm py-8 hidden">No plans for this OPS.</p>
+        <p id="comms-no-match" class="text-center text-slate-400 text-sm py-8 hidden">No plans match your search or filters.</p>
+      </div>
+
+      <div class="card border-dashed border-slate-200 bg-slate-50/50">
+        <div class="text-sm font-semibold text-slate-700 mb-1">Email template</div>
+        <p class="text-xs text-slate-500">Template and DevRev payload will be configured later. Sends run in dry-run mode until enabled.</p>
+      </div>
+    </div>
+  </section>
+
+  <div id="comms-modal-overlay"></div>
+  <div id="comms-modal" role="dialog" aria-modal="true">
+    <h3 class="text-base font-semibold text-slate-900 mb-2">Send communication?</h3>
+    <p id="comms-modal-text" class="text-sm text-slate-600 mb-5"></p>
+    <div class="flex gap-3 justify-end">
+      <button type="button" id="comms-modal-cancel" class="btn-refresh bg-white border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+      <button type="button" id="comms-modal-confirm" class="btn-refresh bg-blue-600 border-blue-600 text-white hover:bg-blue-700">Send</button>
+    </div>
+    <p id="comms-modal-result" class="text-xs mt-3 hidden"></p>
+  </div>
+
   <!-- ── JS ──────────────────────────────────────────────────────────────── -->
   <script>
   (() => {
@@ -586,8 +733,11 @@
     }
 
     // ── Quarter chart (horizontal stacked bar) ────────────────────────────────
-    function renderQuarterChart(quarters) {
+    let quarterDonePlans = {};
+
+    function renderQuarterChart(quarters, donePlans) {
       destroyChart('quarter');
+      quarterDonePlans = donePlans || {};
       const labels = quarters.map(q => q.quarter);
       const done   = quarters.map(q => q.done);
       const pend   = quarters.map(q => q.pending);
@@ -605,11 +755,34 @@
           indexAxis: 'y',
           responsive: true,
           maintainAspectRatio: false,
+          onClick(evt, elements) {
+            if (!elements.length) return;
+            const el = elements[0];
+            if (el.datasetIndex !== 0) return;
+            const q = labels[el.index];
+            const plans = quarterDonePlans[q] || [];
+            if (!plans.length) return;
+            openPlansDrawer(plans, `${q} — Done`, `${fmt(plans.length)} plan${plans.length === 1 ? '' : 's'}`);
+          },
+          onHover(evt, elements) {
+            const canvas = evt.native?.target;
+            if (!canvas) return;
+            const clickable = elements.length
+              && elements[0].datasetIndex === 0
+              && (quarterDonePlans[labels[elements[0].index]] || []).length;
+            canvas.style.cursor = clickable ? 'pointer' : 'default';
+          },
           plugins: {
             legend: { position: 'bottom' },
             tooltip: {
               callbacks: {
                 label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.raw)}`,
+                afterBody: items => {
+                  if (!items.length || items[0].datasetIndex !== 0) return [];
+                  const q = labels[items[0].dataIndex];
+                  const n = (quarterDonePlans[q] || []).length;
+                  return n ? ['', 'Click to view plans'] : [];
+                },
               },
             },
           },
@@ -904,6 +1077,38 @@
       document.body.style.overflow = '';
     }
 
+    function openPlansDrawer(plans, titleText, subtitleText) {
+      drawerTitle.textContent = titleText;
+      drawerSub.textContent   = subtitleText;
+      drawerBody.innerHTML    = '';
+
+      if (!plans.length) {
+        drawerBody.innerHTML = '<p class="text-center text-slate-400 text-sm py-10">No plans found.</p>';
+      } else {
+        plans.forEach(p => {
+          const el = document.createElement('div');
+          el.className = 'plan-row-simple';
+          el.innerHTML = `
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-mono text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">${escHtml(p.plan_id)}</span>
+              <span class="font-semibold text-slate-800 text-sm">${escHtml(p.symlink)}</span>
+              ${p.ops ? `<span class="text-xs text-slate-500">${escHtml(p.ops)}</span>` : ''}
+              <span class="ml-auto flex gap-2 shrink-0">
+                <a href="${JIRA_BASE}/browse/${p.ws_key}" target="_blank" rel="noopener"
+                   class="badge badge-blue text-xs hover:opacity-75 transition-opacity">${p.ws_key}</a>
+                <a href="${JIRA_BASE}/browse/${p.task_key}" target="_blank" rel="noopener"
+                   class="badge badge-blue text-xs hover:opacity-75 transition-opacity">${p.task_key}</a>
+              </span>
+            </div>`;
+          drawerBody.appendChild(el);
+        });
+      }
+
+      drawer.classList.add('open');
+      drawerOverlay.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
     document.getElementById('drawer-close').addEventListener('click', closeDrawer);
     drawerOverlay.addEventListener('click', closeDrawer);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
@@ -1102,7 +1307,7 @@
       if (data.jira_base) JIRA_BASE = data.jira_base;
       populateFilterDropdowns(data);
       renderKPIs(data.summary);
-      renderQuarterChart(data.quarters);
+      renderQuarterChart(data.quarters, data.quarter_done_plans);
       renderDonutChart(data.summary);
       renderOpsChart(data.ops);
       renderWeeklyCharts(data);
@@ -1165,6 +1370,340 @@
     document.getElementById('fr-filter').addEventListener('input', e => {
       applyTableSearch(e.target.value);
     });
+
+    // ── Top navigation ────────────────────────────────────────────────────────
+    const viewDashboard      = document.getElementById('view-dashboard');
+    const viewCommunications = document.getElementById('view-communications');
+    const navDashboard       = document.getElementById('nav-dashboard');
+    const navCommunications  = document.getElementById('nav-communications');
+
+    async function setView(name) {
+      const isDash = name === 'dashboard';
+      viewDashboard.classList.toggle('hidden', !isDash);
+      viewCommunications.classList.toggle('hidden', isDash);
+      navDashboard.classList.toggle('active', isDash);
+      navCommunications.classList.toggle('active', !isDash);
+      if (!isDash) {
+        closeDrawer();
+        syncCommsFiltersFromDashboard();
+        await loadCommunicationsMeta();
+        await onCommsFilterChange();
+      }
+    }
+
+    navDashboard.addEventListener('click', e => { e.preventDefault(); setView('dashboard'); });
+    navCommunications.addEventListener('click', e => { e.preventDefault(); setView('communications'); });
+
+    // ── Communications ────────────────────────────────────────────────────────
+    let commsMeta = null;
+    let commsPlans = [];
+    let commsPlansAll = [];
+    let commsPlansMeta = null;
+    let commsPendingSend = null;
+
+    const commsEmpty    = document.getElementById('comms-empty');
+    const commsContent  = document.getElementById('comms-content');
+    const commsOpsSel   = document.getElementById('comms-filter-ops');
+    const commsQSel     = document.getElementById('comms-filter-quarter');
+    const commsSummary  = document.getElementById('comms-filter-summary');
+    const commsBody     = document.getElementById('comms-body');
+    const commsLoading  = document.getElementById('comms-loading');
+    const commsNoPlans  = document.getElementById('comms-no-plans');
+    const commsModal    = document.getElementById('comms-modal');
+    const commsModalOv  = document.getElementById('comms-modal-overlay');
+    const commsSearch   = document.getElementById('comms-search-symlink');
+    const commsFilterSf = document.getElementById('comms-filter-sf');
+    const commsFilterJira = document.getElementById('comms-filter-jira');
+    const commsFilterDrive = document.getElementById('comms-filter-drive');
+    const commsNoMatch  = document.getElementById('comms-no-match');
+
+    function syncCommsFiltersFromDashboard() {
+      const dashOps = document.getElementById('filter-ops').value;
+      const dashQ   = document.getElementById('filter-quarter').value;
+      if (dashOps && !commsOpsSel.value) commsOpsSel.value = dashOps;
+      if (dashQ && dashQ !== '' && !commsQSel.value) commsQSel.value = dashQ;
+    }
+
+    function commsFiltersReady() {
+      return commsOpsSel.value && commsQSel.value;
+    }
+
+    function updateCommsView() {
+      const ready = commsFiltersReady();
+      commsEmpty.classList.toggle('hidden', ready);
+      commsContent.classList.toggle('hidden', !ready);
+      if (!ready) {
+        commsSummary.textContent = '';
+        return;
+      }
+      let summary = `${commsOpsSel.value} · ${commsQSel.value}`;
+      commsSummary.textContent = summary;
+    }
+
+    async function loadCommunicationsMeta() {
+      try {
+        const r = await fetch('/api/communications/meta');
+        if (!r.ok) return;
+        commsMeta = await r.json();
+        const cur = commsOpsSel.value;
+        commsOpsSel.innerHTML = '<option value="">Select OPS…</option>';
+        (commsMeta.ops || []).forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = o;
+          opt.textContent = o;
+          commsOpsSel.appendChild(opt);
+        });
+        if (cur) commsOpsSel.value = cur;
+        if (commsMeta.jira_base) JIRA_BASE = commsMeta.jira_base;
+      } catch (_) { /* ignore */ }
+    }
+
+    function checkIcon(ok, warn, opts = {}) {
+      const { href, title } = opts;
+      const cls = warn ? 'check-warn' : (ok ? 'check-ok' : 'check-fail');
+      const sym = warn ? '⚠' : (ok ? '✓' : '✗');
+      const t = title || (warn ? 'Not configured — open Drive' : (ok ? 'Pass' : 'Not ready'));
+      if (href && (!ok || warn)) {
+        return `<a href="${esc(href)}" target="_blank" rel="noopener" class="${cls} comms-gate-link" title="${esc(t)} — open">${sym}</a>`;
+      }
+      return `<span class="${cls}" title="${esc(t)}">${sym}</span>`;
+    }
+
+    function filterCommsPlans(plans) {
+      const q = (commsSearch?.value || '').trim().toLowerCase();
+      const needSf = commsFilterSf?.checked;
+      const needJira = commsFilterJira?.checked;
+      const needDrive = commsFilterDrive?.checked;
+      return plans.filter(p => {
+        const c = p.checks || {};
+        if (q && !(p.symlink || '').toLowerCase().includes(q) && !(p.plan_id || '').toString().includes(q)) {
+          return false;
+        }
+        if (needSf && !(c.recon_complete || {}).ok) return false;
+        if (needJira && !(c.jira_q_done || {}).ok) return false;
+        if (needDrive && !(c.drive_file || {}).ok) return false;
+        return true;
+      });
+    }
+
+    function applyCommsClientFilters() {
+      if (!commsPlansMeta) return;
+      const filtered = filterCommsPlans(commsPlansAll);
+      const total = commsPlansAll.length;
+      const eligible = commsPlansAll.filter(p => p.eligible).length;
+      renderCommsTable({
+        ...commsPlansMeta,
+        plans: filtered,
+        summary: {
+          total: filtered.length,
+          eligible: filtered.filter(p => p.eligible).length,
+          pending: filtered.length - filtered.filter(p => p.eligible).length,
+        },
+        _filterNote: filtered.length !== total
+          ? ` · showing ${filtered.length} of ${total}`
+          : '',
+      });
+      const hasData = commsPlansAll.length > 0;
+      const hasMatch = filtered.length > 0;
+      commsNoPlans.classList.toggle('hidden', hasData);
+      commsNoMatch.classList.toggle('hidden', !hasData || hasMatch);
+      if (hasData && !hasMatch) commsBody.innerHTML = '';
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    }
+
+    function renderCommsTable(data) {
+      commsPlans = data.plans || [];
+      document.getElementById('comms-stat-total').textContent    = fmt(data.summary?.total ?? 0);
+      document.getElementById('comms-stat-eligible').textContent = fmt(data.summary?.eligible ?? 0);
+      document.getElementById('comms-stat-pending').textContent  = fmt(data.summary?.pending ?? 0);
+
+      let summary = `${commsOpsSel.value} · ${commsQSel.value}`;
+      if (data.refreshed_at) {
+        const stale = data.stale ? ' · stale — click Sync gates' : '';
+        summary += ` · synced ${new Date(data.refreshed_at).toLocaleString()}${stale}`;
+      } else {
+        summary += ' · no sync yet — click Sync gates';
+      }
+      summary += data._filterNote || '';
+      commsSummary.textContent = summary;
+
+      commsBody.innerHTML = '';
+      commsNoMatch.classList.add('hidden');
+      if (!commsPlansAll.length) {
+        commsNoPlans.classList.remove('hidden');
+        return;
+      }
+      commsNoPlans.classList.add('hidden');
+      if (!commsPlans.length) return;
+
+      commsPlans.forEach(p => {
+        const c = p.checks || {};
+        const rc = c.recon_complete || {};
+        const jq = c.jira_q_done || {};
+        const dr = c.drive_file || {};
+        const driveWarn = dr.configured === false;
+        const jiraHref = jq.url || (jq.task_key ? `${JIRA_BASE}/browse/${jq.task_key}` : (p.ws_key ? `${JIRA_BASE}/browse/${p.ws_key}` : null));
+        const driveHref = dr.folder_url || null;
+        const emails = (p.sponsor_emails_effective || p.sponsor_emails || p.sponsor_emails_default || []).join(', ');
+        const ticket = p.devrev_ticket_key || (p.send_status === 'dry_run' ? '—' : '');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="font-mono text-xs">${esc(p.plan_id)}</td>
+          <td class="font-semibold text-sm">${esc(p.symlink)}</td>
+          <td class="text-center">${checkIcon(rc.ok, false, { title: rc.detail || 'Snowflake recon' })}</td>
+          <td class="text-center">${checkIcon(jq.ok, false, { href: jiraHref, title: jq.detail || 'Jira Q task' })}</td>
+          <td class="text-center">${checkIcon(dr.ok, driveWarn, { href: driveHref, title: dr.detail || 'Drive folder' })}</td>
+          <td class="text-xs max-w-[200px]">
+            <input type="text" class="comms-sponsor-input w-full border border-slate-200 rounded px-1.5 py-0.5 text-xs" value="${esc(emails)}" data-plan="${esc(p.plan_id)}" data-quarter="${esc(p.quarter)}" />
+          </td>
+          <td class="text-xs font-mono text-slate-600">${esc(ticket)}</td>
+          <td>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${p.eligible ? 'badge-eligible' : 'badge-pending'}">
+              ${p.eligible ? 'Ready' : 'Not ready'}
+            </span>
+          </td>
+          <td>
+            <button type="button" class="comms-send-btn text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed" ${p.eligible ? '' : 'disabled'}>
+              Send
+            </button>
+          </td>`;
+        const btn = tr.querySelector('.comms-send-btn');
+        if (p.eligible) btn.addEventListener('click', () => openCommsModal(p));
+        tr.querySelector('.comms-sponsor-input').addEventListener('change', onSponsorEdit);
+        tr.title = [rc.detail, jq.detail, dr.detail].filter(Boolean).join(' · ');
+        commsBody.appendChild(tr);
+      });
+    }
+
+    async function onSponsorEdit(e) {
+      const inp = e.target;
+      const planId = inp.dataset.plan;
+      const quarter = inp.dataset.quarter;
+      const emails = inp.value.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      try {
+        const r = await fetch(`/api/communications/plans/${planId}/${quarter}/sponsors`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        inp.classList.add('ring-1', 'ring-green-400');
+        setTimeout(() => inp.classList.remove('ring-1', 'ring-green-400'), 800);
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    async function loadCommunicationsPlans() {
+      if (!commsFiltersReady()) return;
+      commsLoading.classList.remove('hidden');
+      commsNoPlans.classList.add('hidden');
+      commsNoMatch.classList.add('hidden');
+      commsBody.innerHTML = '';
+      commsPlansAll = [];
+      commsPlansMeta = null;
+      try {
+        const p = new URLSearchParams({ ops: commsOpsSel.value, quarter: commsQSel.value });
+        const r = await fetch(`/api/communications/plans?${p}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        commsPlansAll = data.plans || [];
+        commsPlansMeta = {
+          refreshed_at: data.refreshed_at,
+          stale: data.stale,
+          summary: data.summary,
+        };
+        applyCommsClientFilters();
+      } catch (err) {
+        commsBody.innerHTML = `<tr><td colspan="9" class="text-center text-red-500 py-6">${esc(err.message)}</td></tr>`;
+      } finally {
+        commsLoading.classList.add('hidden');
+      }
+    }
+
+    async function syncCommunicationsGates() {
+      if (!commsFiltersReady()) return;
+      const btn = document.getElementById('comms-refresh-btn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      try {
+        const p = new URLSearchParams({ ops: commsOpsSel.value, quarter: commsQSel.value });
+        const r = await fetch(`/api/communications/refresh?${p}`, { method: 'POST' });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        await loadCommunicationsPlans();
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync gates';
+      }
+    }
+
+    function openCommsModal(plan) {
+      commsPendingSend = plan;
+      document.getElementById('comms-modal-text').textContent =
+        `Send ${commsQSel.value} reconciliation communication for plan ${plan.plan_id} (${plan.symlink})? All checks passed.`;
+      document.getElementById('comms-modal-result').classList.add('hidden');
+      commsModal.classList.add('open');
+      commsModalOv.classList.add('open');
+    }
+
+    function closeCommsModal() {
+      commsModal.classList.remove('open');
+      commsModalOv.classList.remove('open');
+      commsPendingSend = null;
+    }
+
+    async function confirmCommsSend() {
+      if (!commsPendingSend) return;
+      const resultEl = document.getElementById('comms-modal-result');
+      const btn = document.getElementById('comms-modal-confirm');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/communications/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            plan_id: commsPendingSend.plan_id,
+            quarter: commsQSel.value,
+            ops: commsOpsSel.value,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        const msg = data.send?.message || (data.send?.dry_run ? 'Dry run — not sent' : 'Sent');
+        resultEl.textContent = msg;
+        resultEl.className = 'text-xs mt-3 text-green-700';
+        resultEl.classList.remove('hidden');
+      } catch (err) {
+        resultEl.textContent = err.message;
+        resultEl.className = 'text-xs mt-3 text-red-600';
+        resultEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function onCommsFilterChange() {
+      updateCommsView();
+      if (commsFiltersReady()) await loadCommunicationsPlans();
+    }
+
+    commsOpsSel.addEventListener('change', () => { onCommsFilterChange(); });
+    commsQSel.addEventListener('change', () => { onCommsFilterChange(); });
+    commsSearch.addEventListener('input', () => { applyCommsClientFilters(); });
+    commsFilterSf.addEventListener('change', () => { applyCommsClientFilters(); });
+    commsFilterJira.addEventListener('change', () => { applyCommsClientFilters(); });
+    commsFilterDrive.addEventListener('change', () => { applyCommsClientFilters(); });
+    document.getElementById('comms-refresh-btn').addEventListener('click', syncCommunicationsGates);
+    document.getElementById('comms-modal-cancel').addEventListener('click', closeCommsModal);
+    commsModalOv.addEventListener('click', closeCommsModal);
+    document.getElementById('comms-modal-confirm').addEventListener('click', confirmCommsSend);
 
     // ── Boot ──────────────────────────────────────────────────────────────────
     load(false);

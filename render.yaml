@@ -25,3 +25,45 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      - key: SNOWFLAKE_ENABLED
+        sync: false
+      - key: SNOWFLAKE_ACCOUNT
+        sync: false
+      - key: SNOWFLAKE_USER
+        sync: false
+      - key: SNOWFLAKE_WAREHOUSE
+        sync: false
+      - key: SNOWFLAKE_ROLE
+        sync: false
+      - key: SNOWFLAKE_DATABASE
+        sync: false
+      - key: SNOWFLAKE_SCHEMA
+        sync: false
+      - key: SNOWFLAKE_PRIVATE_KEY_BASE64
+        sync: false
+      - key: SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+        sync: false
+      - key: DRIVE_API_KEY
+        sync: false
+      - key: DRIVE_PARENT_FOLDER_ID
+        sync: false
+      - key: DRIVE_COMM_REQUIRED_PATTERN
+        sync: false
+      - key: RECON_YEAR
+        value: "2026"
+      - key: COMMUNICATIONS_DRY_RUN
+        value: "true"
+      - key: DEVREV_ENABLED
+        sync: false
+      - key: DEVREV_API_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: COMMS_USE_SUPABASE
+        value: "true"
+      - key: COMMS_CACHE_TTL_HOURS
+        value: "6"
+      - key: COMMS_SYNC_SECRET
+        sync: false

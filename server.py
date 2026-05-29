@@ -25,15 +25,22 @@ from pathlib import Path
 import httpx
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-# ── env ───────────────────────────────────────────────────────────────────────
+# ── env (must load before snowflake_client — it reads SNOWFLAKE_ENABLED at import) ─
 load_dotenv(Path(__file__).parent / ".env")
+
+import communications as comm
+import comms_sync
+import devrev_client as devrev
+import snowflake_client as sf
+import supabase_store as sb_store
 
 JIRA_BASE  = os.environ.get("JIRA_BASE_URL", "https://forusall401k.atlassian.net").rstrip("/")
 JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
@@ -47,7 +54,9 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "forusall.com").lstrip("@")
 APP_BASE_URL         = os.environ.get("APP_BASE_URL", "").rstrip("/")
 
-AUTH_PUBLIC_PATHS = {"/api/health", "/auth/login", "/auth/callback"}
+COMMS_SYNC_SECRET = os.environ.get("COMMS_SYNC_SECRET", "").strip()
+
+AUTH_PUBLIC_PATHS = {"/api/health", "/auth/login", "/auth/callback", "/api/communications/sync-all"}
 
 # ── Jira custom fields (R2026) ────────────────────────────────────────────────
 OPS_CF          = "customfield_11675"
@@ -222,6 +231,18 @@ def _fetch_raw() -> dict:
     return {"workstreams": workstreams, "tasks": tasks}
 
 
+def _ensure_jira_raw() -> dict:
+    """Return cached Jira workstreams + tasks, refreshing if stale."""
+    global _cache
+    now = time.time()
+    if not _cache.get("raw") or (now - _cache.get("ts", 0)) >= CACHE_TTL:
+        try:
+            _cache = {"raw": _fetch_raw(), "ts": now}
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=f"Jira API error: {exc}") from exc
+    return _cache["raw"]
+
+
 def _filter_options(workstreams: list[dict]) -> dict:
     ops = sorted({_ops_label(ws["ops"]) for ws in workstreams if ws.get("ops")}, key=str.lower)
     rk  = sorted({ws["record_keeper"] for ws in workstreams if ws.get("record_keeper")}, key=str.lower)
@@ -318,8 +339,30 @@ def _compute_dashboard(
         for q, v in q_counters.items()
     ]
 
+    ws_by_key = {ws["key"]: ws for ws in workstreams}
+
+    quarter_done_plans: dict[str, list[dict]] = {q: [] for q in q_list}
+    for t in tasks:
+        if t["summary"] not in QUARTER_TASKS or not t["done"]:
+            continue
+        if t["summary"] not in quarter_done_plans:
+            continue
+        ws = ws_by_key.get(t["parent_key"])
+        if not ws:
+            continue
+        quarter_done_plans[t["summary"]].append({
+            "plan_id":  ws["plan_id"],
+            "symlink":  ws["symlink"],
+            "ops":      _ops_label(ws["ops"]),
+            "ws_key":   ws["key"],
+            "task_key": t["key"],
+        })
+    for q in quarter_done_plans:
+        quarter_done_plans[q].sort(
+            key=lambda x: int(x["plan_id"]) if x["plan_id"].isdigit() else 0
+        )
+
     # ── OPS breakdown (Q tasks only) ──────────────────────────────────────────
-    ws_by_key   = {ws["key"]: ws for ws in workstreams}
     ops_counter: dict[str, dict[str, int]] = defaultdict(lambda: {"done": 0, "pending": 0})
 
     for t in tasks:
@@ -463,6 +506,7 @@ def _compute_dashboard(
             "quarter":        quarter or "",
         },
         "quarters":               quarters,
+        "quarter_done_plans":     quarter_done_plans,
         "ops":                    ops_data,
         "weekly":                 weekly_data,
         "weekly_q_tasks":         weekly_q_data,
@@ -630,9 +674,9 @@ def get_dashboard(
     quarter  = quarter if quarter in QUARTER_TASKS else None
 
     try:
-        if refresh or not _cache.get("raw") or (now - _cache.get("ts", 0)) >= CACHE_TTL:
-            _cache = {"raw": _fetch_raw(), "ts": now}
-        raw  = _cache["raw"]
+        if refresh:
+            _cache = {}
+        raw = _ensure_jira_raw()
         data = _compute_dashboard(
             raw["workstreams"],
             raw["tasks"],
@@ -650,6 +694,283 @@ def get_dashboard(
 @app.get("/api/health")
 def health():
     return {"status": "ok", "cached": bool(_cache.get("raw"))}
+
+
+@app.get("/api/snowflake/test")
+def snowflake_test():
+    """
+    Read-only Snowflake connectivity check (requires auth when REQUIRE_AUTH=true).
+    Set SNOWFLAKE_ENABLED=true and RSA keypair env vars — see README.
+    """
+    if not sf.is_enabled():
+        return JSONResponse(
+            status_code=200,
+            content={"ok": False, "reason": "disabled", "hint": "Set SNOWFLAKE_ENABLED=true"},
+        )
+
+    missing = sf.validate_config()
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Snowflake not configured. Missing: {', '.join(missing)}",
+        )
+
+    try:
+        row = sf.test_connection()
+    except sf.SnowflakeKeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sf.SnowflakeConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sf.SnowflakeConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {"ok": True, **row}
+
+
+def _snowflake_enabled_or_http():
+    if not sf.is_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Snowflake disabled. Set SNOWFLAKE_ENABLED=true in .env",
+        )
+    missing = sf.validate_config()
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Snowflake not configured. Missing: {', '.join(missing)}",
+        )
+
+
+@app.get("/api/snowflake/plans-in-bucket")
+def snowflake_plans_in_bucket(
+    plan_id: int = Query(..., description="Plan ID (e.g. 92)"),
+    ops: str | None = Query(None, description="Optional OPS email filter (matches EMAIL column)"),
+):
+    """
+    Rows from RECON_PROJECT.CONTROL.PLANS_IN_BUCKET for one plan.
+    Example: /api/snowflake/plans-in-bucket?plan_id=92
+    With OPS filter: ?plan_id=92&ops=ana@forusall.com
+    """
+    _snowflake_enabled_or_http()
+    try:
+        rows = sf.fetch_plans_in_bucket(plan_id, ops_email=ops)
+    except sf.SnowflakeKeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sf.SnowflakeConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sf.SnowflakeConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "plan_id": plan_id,
+        "ops": ops,
+        "count": len(rows),
+        "rows": rows,
+    }
+
+
+class CommunicationsSendBody(BaseModel):
+    plan_id: str
+    quarter: str
+    ops: str
+
+
+class SponsorEmailsBody(BaseModel):
+    emails: list[str]
+
+
+def _session_email(request: Request) -> str | None:
+    user = request.session.get("user") or {}
+    return user.get("email")
+
+
+def _comms_plans_response(ops: str | None, quarter: str | None):
+    if not ops or not quarter or quarter not in QUARTER_TASKS:
+        return {
+            "ok": True,
+            "plans": [],
+            "message": "Select OPS and quarter",
+            "summary": {"total": 0, "eligible": 0, "pending": 0},
+            "stale": False,
+            "refreshed_at": None,
+        }
+    if not sb_store.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
+        )
+    try:
+        plans, meta = sb_store.list_plans(ops, quarter)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "ops": ops,
+        "quarter": quarter,
+        "file_date": comm.quarter_file_date(quarter),
+        "plans": plans,
+        "summary": meta["summary"],
+        "stale": meta["stale"],
+        "refreshed_at": meta["refreshed_at"],
+        "last_sync_job": sb_store.latest_sync_job(),
+    }
+
+
+@app.get("/api/communications/meta")
+def communications_meta():
+    """OPS list, quarters, and integration flags for Communications tab."""
+    base = comm.meta_from_workstreams(_ensure_jira_raw()["workstreams"])
+    if sb_store.is_configured():
+        try:
+            sb_ops = sb_store.distinct_ops_labels()
+            if sb_ops:
+                base["ops"] = sorted(
+                    set(base.get("ops") or []) | set(sb_ops),
+                    key=str.lower,
+                )
+        except Exception:
+            pass
+    base["supabase_configured"] = sb_store.is_configured()
+    base["jira_base"] = JIRA_BASE
+    return base
+
+
+@app.get("/api/communications/plans")
+def communications_plans(
+    ops: str | None = Query(None),
+    quarter: str | None = Query(None),
+):
+    return _comms_plans_response(ops, quarter)
+
+
+@app.get("/api/communications/eligible")
+def communications_eligible(
+    ops: str | None = Query(None),
+    quarter: str | None = Query(None),
+):
+    """Alias for /plans (Supabase-backed)."""
+    return _comms_plans_response(ops, quarter)
+
+
+@app.get("/api/communications/plan")
+def communications_plan(
+    plan_id: str = Query(...),
+    ops: str | None = Query(None),
+    quarter: str | None = Query(None),
+):
+    if not quarter or quarter not in QUARTER_TASKS:
+        raise HTTPException(status_code=400, detail="quarter is required")
+    if not sb_store.is_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    try:
+        pid = int(plan_id)
+        plan = sb_store.get_plan(pid, quarter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid plan_id") from exc
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if ops and plan.get("ops_label") != ops:
+        raise HTTPException(status_code=404, detail="Plan not found for this OPS filter")
+    return {"ok": True, "plan": plan}
+
+
+@app.patch("/api/communications/plans/{plan_id}/{quarter}/sponsors")
+def communications_update_sponsors(
+    plan_id: int,
+    quarter: str,
+    body: SponsorEmailsBody,
+    request: Request,
+):
+    if quarter not in QUARTER_TASKS:
+        raise HTTPException(status_code=400, detail="Invalid quarter")
+    if not sb_store.is_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    emails = [e.strip().lower() for e in body.emails if e.strip()]
+    try:
+        plan = sb_store.update_sponsors(plan_id, quarter, emails, _session_email(request))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Plan not found") from exc
+    return {"ok": True, "plan": plan}
+
+
+@app.post("/api/communications/refresh")
+def communications_refresh(
+    ops: str = Query(...),
+    quarter: str = Query(...),
+):
+    if quarter not in QUARTER_TASKS:
+        raise HTTPException(status_code=400, detail="Invalid quarter")
+    if not sb_store.is_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    raw = _ensure_jira_raw()
+    try:
+        result = comms_sync.sync_ops_quarter(
+            ops, quarter, raw["workstreams"], raw["tasks"]
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
+@app.post("/api/communications/sync-all")
+def communications_sync_all(secret: str = Query("")):
+    if not COMMS_SYNC_SECRET or secret != COMMS_SYNC_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid sync secret")
+    if not sb_store.is_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    raw = _ensure_jira_raw()
+    try:
+        return comms_sync.sync_all(raw["workstreams"], raw["tasks"])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/communications/send")
+def communications_send(request: Request, body: CommunicationsSendBody = Body(...)):
+    quarter = body.quarter if body.quarter in QUARTER_TASKS else None
+    if not quarter or not body.ops.strip():
+        raise HTTPException(status_code=400, detail="ops and quarter are required")
+    if not sb_store.is_configured():
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    try:
+        pid = int(body.plan_id)
+        plan = sb_store.get_plan(pid, quarter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid plan_id") from exc
+    if not plan or plan.get("ops_label") != body.ops.strip():
+        raise HTTPException(status_code=404, detail="Plan not found for this OPS filter")
+    if not plan["eligible"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Plan is not eligible — all gates must pass before sending",
+        )
+
+    payload = {
+        "plan_id": plan["plan_id"],
+        "symlink": plan["symlink"],
+        "quarter": quarter,
+        "ops": body.ops.strip(),
+        "ws_key": plan["ws_key"],
+        "file_date": comm.quarter_file_date(quarter),
+        "sponsor_emails": plan.get("sponsor_emails_effective") or [],
+    }
+    result = devrev.send_communication(payload)
+    status = "dry_run" if result.get("dry_run") else ("sent" if result.get("ok") else "failed")
+    ticket = result.get("ticket_key") or result.get("devrev_ticket_key")
+    try:
+        plan = sb_store.update_send_result(
+            pid,
+            quarter,
+            send_status=status,
+            devrev_ticket_key=ticket,
+            sent_by=_session_email(request) if request else None,
+            send_error=None if result.get("ok") else result.get("message"),
+        )
+    except LookupError:
+        pass
+    return {"ok": result.get("ok", False), "plan": plan, "send": result}
 
 
 @app.get("/api/task-details")

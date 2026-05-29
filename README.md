@@ -159,3 +159,116 @@ Results are cached in-memory for **5 minutes**. Click **🔄 Refresh** in the he
 4. `python3 -m uvicorn server:app --port 8000`
 
 No build steps, no Node, no databases — just Python and a browser.
+
+---
+
+## Snowflake connectivity test
+
+The dashboard can verify Snowflake access via **`GET /api/snowflake/test`** (same RSA keypair as the org `snow` CLI). This does not change dashboard metrics yet — Jira remains the data source for charts.
+
+### Credentials (RSA keypair)
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `SNOWFLAKE_ENABLED` | Yes | `true` to enable the test endpoint |
+| `SNOWFLAKE_ACCOUNT` | Yes | From `~/.snowflake/connections.toml` profile `payroll_node` |
+| `SNOWFLAKE_USER` | Yes | Snowflake username |
+| `SNOWFLAKE_WAREHOUSE` | Yes | Warehouse name |
+| `SNOWFLAKE_PRIVATE_KEY` | One of three | Full PEM text (use `\n` for newlines in `.env`) |
+| `SNOWFLAKE_PRIVATE_KEY_BASE64` | One of three | Base64 of PEM file — preferred on **Render** |
+| `SNOWFLAKE_PRIVATE_KEY_PATH` | One of three | e.g. `~/.snowflake/keys/cli_key.p8` — **local dev only** |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | If key encrypted | Same as Keychain / `snowflake_pass` (local: `PRIVATE_KEY_PASSPHRASE` also works after `snowflake_pass`) |
+| `SNOWFLAKE_ROLE` | No | e.g. read-only role |
+| `SNOWFLAKE_DATABASE` | No | e.g. `FORUS_WEB` |
+| `SNOWFLAKE_SCHEMA` | No | e.g. `PUBLIC` |
+
+Copy from `.env.example` and fill in `.env`. Never commit keys or passphrases.
+
+### Local test
+
+1. Confirm CLI works (optional baseline):
+
+   ```bash
+   source ~/.zshrc && snowflake_pass
+   snow sql -c payroll_node --query "SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE()" --format JSON
+   ```
+
+2. In `recon-dashboard/.env` set `SNOWFLAKE_ENABLED=true` and either:
+   - `SNOWFLAKE_PRIVATE_KEY_PATH=~/.snowflake/keys/cli_key.p8` + account/user/warehouse/passphrase, or
+   - paste PEM into `SNOWFLAKE_PRIVATE_KEY`.
+
+3. For curl without login: `REQUIRE_AUTH=false`.
+
+4. Start the server and open:
+
+   ```
+   http://localhost:8000/api/snowflake/test
+   ```
+
+   Success:
+
+   ```json
+   { "ok": true, "user": "...", "role": "...", "warehouse": "...", "database": "..." }
+   ```
+
+   With `SNOWFLAKE_ENABLED=false`:
+
+   ```json
+   { "ok": false, "reason": "disabled", "hint": "Set SNOWFLAKE_ENABLED=true" }
+   ```
+
+When `REQUIRE_AUTH=true` (production), you must be logged in with Google (`@forusall.com`) before calling this URL.
+
+### Plans in bucket (per plan)
+
+`GET /api/snowflake/plans-in-bucket?plan_id=92` returns all rows from `RECON_PROJECT.CONTROL.PLANS_IN_BUCKET` for that plan (file dates, recon status, payroll/RK file names, etc.).
+
+Optional OPS filter (matches `EMAIL` on the row):
+
+```
+/api/snowflake/plans-in-bucket?plan_id=92&ops=ana@forusall.com
+```
+
+Requires `SNOWFLAKE_DATABASE=RECON_PROJECT`, `SNOWFLAKE_SCHEMA=CONTROL`, and role with read access (e.g. `OPS_DEV` from the `recon_project` CLI profile).
+
+### Render production
+
+Add secret env vars on the `r2026-recon-dashboard` service (see `render.yaml` keys). Recommended:
+
+- `SNOWFLAKE_ENABLED=true`
+- `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE`
+- `SNOWFLAKE_PRIVATE_KEY_BASE64` — `base64 -i ~/.snowflake/keys/cli_key.p8 | tr -d '\n'`
+- `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE`
+
+Redeploy, log in to the app, then visit `/api/snowflake/test`. `/api/health` stays Jira-only so deploy health checks are unaffected.
+
+Future work: join [reconciliation/sql/recon_dashboard_plans.sql](../reconciliation/sql/recon_dashboard_plans.sql) into dashboard metrics.
+
+---
+
+## Communications tab
+
+OPS users send sponsor emails (via **DevRev**, template TBD) only when a plan passes three gates for the selected quarter:
+
+| Gate | Source |
+|------|--------|
+| Recon complete | Row in `RECON_PROJECT.CONTROL.RECON_COMPLETE_DETAILS` for `plan_id` + quarter end `FILE_DATE` (e.g. Q1 → `2026-03-31`) |
+| Jira Q done | R2026 workstream child task `Q1`–`Q4` in Done status |
+| Drive file | File matching `DRIVE_COMM_REQUIRED_PATTERN` in plan folder `{plan_id} - {symlink}` |
+
+**Filtering:** Communications starts empty. Select **OPS** and **quarter** to load plans (any user can view any OPS’s book). Dashboard filters pre-fill Communications when you switch tabs.
+
+**API:**
+
+- `GET /api/communications/meta` — OPS list, config flags
+- `GET /api/communications/eligible?ops=...&quarter=Q1` — plan checklist
+- `POST /api/communications/send` — DevRev stub (dry-run by default)
+
+**Env:** `RECON_YEAR`, `COMMUNICATIONS_DRY_RUN`, `DEVREV_API_TOKEN`, `DEVREV_ENABLED`, `DRIVE_COMM_REQUIRED_PATTERN`, `DRIVE_API_KEY`, `DRIVE_PARENT_FOLDER_ID`.
+
+**Supabase (required for Communications):** See **[SUPABASE.md](./SUPABASE.md)** — `supabase link` + `supabase db push`, then set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+
+- **Load** — read cached rows from Supabase (fast).
+- **Sync gates** — batch refresh Jira + Snowflake + Drive into Supabase for one OPS+quarter.
+- **Cron** — `POST /api/communications/sync-all?secret=...` every 6 hours on Render.
+- Edit sponsor emails in the table (saved to Supabase); ticket key after send.
