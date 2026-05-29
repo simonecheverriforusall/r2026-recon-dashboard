@@ -14,9 +14,12 @@ Then open http://localhost:8000
 """
 from __future__ import annotations
 
+import logging
 import os
 import secrets
+import threading
 import time
+from contextlib import asynccontextmanager
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -134,6 +137,19 @@ def _format_weekly(counter: dict[str, int], start_week: str, end_week: str) -> l
 # ── simple in-process cache ───────────────────────────────────────────────────
 _cache: dict = {}
 CACHE_TTL    = 300  # seconds
+JIRA_HTTP_TIMEOUT = 120.0  # Render cold starts + large Jira pagination
+
+log = logging.getLogger("uvicorn.error")
+
+
+def _jira_error_response(exc: Exception) -> HTTPException:
+    if isinstance(exc, httpx.HTTPStatusError):
+        detail = f"Jira API error: {exc.response.status_code} {exc.response.text[:200]}"
+    elif isinstance(exc, httpx.HTTPError):
+        detail = f"Jira request failed: {type(exc).__name__}: {exc}"
+    else:
+        detail = f"Jira fetch failed: {exc}"
+    return HTTPException(status_code=502, detail=detail)
 
 
 # ── Jira helpers ──────────────────────────────────────────────────────────────
@@ -180,24 +196,26 @@ def _build_dashboard(
 
 
 def _fetch_raw() -> dict:
-    """Fetch and parse all workstreams and tasks from Jira."""
-    auth    = (JIRA_EMAIL, JIRA_TOKEN)
+    """Fetch and parse all workstreams and tasks from Jira (parallel requests)."""
+    auth = (JIRA_EMAIL, JIRA_TOKEN)
     headers = {"Accept": "application/json"}
+    ws_jql = f"project = {PROJECT} AND issuetype = Workstream ORDER BY created ASC"
+    task_jql = f"project = {PROJECT} AND issuetype = Task ORDER BY created ASC"
+    ws_fields = [
+        "key", "summary", "status", "resolutiondate",
+        OPS_CF, PLAN_ID_CF, SYMLINK_CF, AUDIT_CF, RK_CF, OFF_CALENDAR_CF,
+    ]
+    task_fields = ["key", "summary", "status", "parent", "resolutiondate"]
 
-    with httpx.Client(auth=auth, headers=headers, timeout=90.0) as client:
-        ws_issues = _search_all(
-            client,
-            f"project = {PROJECT} AND issuetype = Workstream ORDER BY created ASC",
-            [
-                "key", "summary", "status", "resolutiondate",
-                OPS_CF, PLAN_ID_CF, SYMLINK_CF, AUDIT_CF, RK_CF, OFF_CALENDAR_CF,
-            ],
-        )
-        task_issues = _search_all(
-            client,
-            f"project = {PROJECT} AND issuetype = Task ORDER BY created ASC",
-            ["key", "summary", "status", "parent", "resolutiondate"],
-        )
+    def _fetch(jql: str, fields: list[str]) -> list[dict]:
+        with httpx.Client(auth=auth, headers=headers, timeout=JIRA_HTTP_TIMEOUT) as client:
+            return _search_all(client, jql, fields)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ws_future = pool.submit(_fetch, ws_jql, ws_fields)
+        task_future = pool.submit(_fetch, task_jql, task_fields)
+        ws_issues = ws_future.result()
+        task_issues = task_future.result()
 
     workstreams: list[dict] = []
     for iss in ws_issues:
@@ -238,9 +256,25 @@ def _ensure_jira_raw() -> dict:
     if not _cache.get("raw") or (now - _cache.get("ts", 0)) >= CACHE_TTL:
         try:
             _cache = {"raw": _fetch_raw(), "ts": now}
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=f"Jira API error: {exc}") from exc
+        except Exception as exc:
+            raise _jira_error_response(exc) from exc
     return _cache["raw"]
+
+
+def _warm_jira_cache() -> None:
+    if not JIRA_EMAIL or not JIRA_TOKEN:
+        return
+    try:
+        raw = _ensure_jira_raw()
+        log.info(
+            "Jira cache ready: %s workstreams, %s tasks",
+            len(raw["workstreams"]),
+            len(raw["tasks"]),
+        )
+    except HTTPException as exc:
+        log.warning("Jira cache warm failed: %s", exc.detail)
+    except Exception as exc:
+        log.warning("Jira cache warm failed: %s", exc)
 
 
 def _filter_options(workstreams: list[dict]) -> dict:
@@ -574,7 +608,14 @@ def _app_base_url(request: Request) -> str:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="R2026 Reconciliation Dashboard API")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    if JIRA_EMAIL and JIRA_TOKEN:
+        threading.Thread(target=_warm_jira_cache, name="jira-cache-warm", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="R2026 Reconciliation Dashboard API", lifespan=_lifespan)
 
 _session_secret = SESSION_SECRET or secrets.token_urlsafe(32)
 
@@ -685,15 +726,21 @@ def get_dashboard(
             calendar=calendar,
             quarter=quarter,
         )
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Jira API error: {exc}") from exc
+    except Exception as exc:
+        raise _jira_error_response(exc) from exc
 
     return data
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "cached": bool(_cache.get("raw"))}
+    raw = _cache.get("raw")
+    return {
+        "status": "ok",
+        "cached": bool(raw),
+        "workstreams": len(raw["workstreams"]) if raw else 0,
+        "tasks": len(raw["tasks"]) if raw else 0,
+    }
 
 
 @app.get("/api/snowflake/test")
